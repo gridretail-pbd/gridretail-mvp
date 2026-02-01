@@ -292,6 +292,9 @@ export default function NuevoArriboPage() {
     const tienda = getTiendaActiva()
     if (tienda) {
       setTiendaActiva(tienda)
+    } else {
+      // Si no hay tienda seleccionada, redirigir a seleccionar tienda
+      router.push('/seleccionar-tienda')
     }
   }, [router])
 
