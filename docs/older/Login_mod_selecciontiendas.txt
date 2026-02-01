@@ -1,0 +1,210 @@
+Claude Code, necesito modificar el flujo de autenticación de GridRetail para incluir selección de tienda.
+
+## CONTEXTO:
+Después del login, ciertos usuarios deben seleccionar la tienda donde van a trabajar. Esta tienda se usa automáticamente en todos los registros (ventas, arribos).
+
+## CAMBIOS NECESARIOS:
+
+### 1. CREAR app/(auth)/seleccionar-tienda/page.tsx
+
+Página para seleccionar tienda después del login:
+```tsx
+'use client'
+
+// Funcionalidad:
+// - Obtener usuario del localStorage
+// - Verificar si el rol requiere tienda (ver lista abajo)
+// - Si NO requiere tienda → redirigir directo a /dashboard
+// - Si requiere tienda → cargar tiendas asignadas desde usuarios_tiendas
+// - Si tiene 1 sola tienda → asignarla automáticamente y redirigir
+// - Si tiene múltiples → mostrar grid de cards para seleccionar
+// - Al seleccionar → guardar en localStorage y cookie, redirigir a /dashboard
+
+// Roles que NO requieren tienda (redirigir directo):
+const ROLES_SIN_TIENDA = [
+  'ADMIN',
+  'GERENTE_GENERAL', 
+  'GERENTE_COMERCIAL',
+  'BACKOFFICE_OPERACIONES',
+  'BACKOFFICE_RRHH',
+  'BACKOFFICE_AUDITORIA',
+  'CAPACITADOR',
+  'VALIDADOR_ARRIBOS'
+]
+
+// UI:
+// - Header simple con logo GridRetail y nombre del usuario
+// - Título: "¿En qué tienda trabajas hoy?"
+// - Grid de cards (2-3 columnas en desktop, 1 en mobile)
+// - Cada card muestra: nombre tienda, código, zona
+// - Al hacer click en una card → seleccionar esa tienda
+// - Loading state mientras carga las tiendas
+// - Si no tiene tiendas asignadas → mostrar error y botón para cerrar sesión
+```
+
+### 2. MODIFICAR app/(auth)/login/page.tsx
+
+Cambiar la redirección después del login exitoso:
+```tsx
+// ANTES:
+router.push('/dashboard')
+
+// DESPUÉS:
+router.push('/seleccionar-tienda')
+```
+
+### 3. MODIFICAR middleware.ts
+
+Agregar lógica para verificar tienda seleccionada:
+```typescript
+// Rutas que no requieren tienda seleccionada
+const rutasSinTienda = ['/login', '/seleccionar-tienda']
+
+// En el middleware, después de verificar sesión:
+// Si el usuario tiene sesión pero NO tiene tienda_activa en la cookie
+// Y la ruta NO está en rutasSinTienda
+// → Redirigir a /seleccionar-tienda
+```
+
+### 4. MODIFICAR lib/auth-client.ts
+
+Agregar funciones para manejar tienda activa:
+```typescript
+export interface TiendaActiva {
+  id: string
+  codigo: string
+  nombre: string
+  zona: string
+}
+
+export function getTiendaActiva(): TiendaActiva | null {
+  if (typeof window === 'undefined') return null
+  const tiendaStr = localStorage.getItem('tienda_activa')
+  if (!tiendaStr) return null
+  try {
+    return JSON.parse(tiendaStr) as TiendaActiva
+  } catch {
+    return null
+  }
+}
+
+export function setTiendaActiva(tienda: TiendaActiva) {
+  localStorage.setItem('tienda_activa', JSON.stringify(tienda))
+  // También guardar en cookie para el middleware
+  document.cookie = `tienda_activa=${JSON.stringify(tienda)}; path=/; max-age=${60*60*24*7}`
+}
+
+export function clearTiendaActiva() {
+  localStorage.removeItem('tienda_activa')
+  document.cookie = 'tienda_activa=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
+}
+
+// Modificar logout() para también limpiar tienda
+export function logout() {
+  localStorage.removeItem('user')
+  localStorage.removeItem('tienda_activa')
+  document.cookie = 'session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
+  document.cookie = 'tienda_activa=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
+  window.location.href = '/login'
+}
+```
+
+### 5. MODIFICAR components/layout/navbar.tsx
+
+Agregar selector de tienda en el navbar:
+```tsx
+// Mostrar la tienda activa con dropdown para cambiar
+// Solo mostrar si el usuario tiene tienda seleccionada
+// 
+// Layout del navbar:
+// [Logo GridRetail] ... [Tienda: TE AGUSTINO ▼] [Usuario | Rol | Cerrar Sesión]
+//
+// Al hacer click en la tienda → mostrar dropdown con las otras tiendas del usuario
+// Al seleccionar otra tienda → mostrar confirmación:
+//   "¿Cambiar a TE VMT? Los nuevos registros se harán en esta tienda."
+//   [Cancelar] [Confirmar]
+// Al confirmar → actualizar tienda_activa en localStorage y cookie
+```
+
+### 6. CREAR app/api/usuarios/[id]/tiendas/route.ts
+
+API para obtener tiendas asignadas a un usuario:
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const supabase = await createClient()
+    const userId = params.id
+    
+    // Obtener usuario para ver su rol
+    const { data: usuario } = await supabase
+      .from('usuarios')
+      .select('rol')
+      .eq('id', userId)
+      .single()
+    
+    // Si es ADMIN, retornar todas las tiendas
+    if (usuario?.rol === 'ADMIN') {
+      const { data: tiendas, error } = await supabase
+        .from('tiendas')
+        .select('id, codigo, nombre, zona')
+        .eq('activa', true)
+        .order('nombre')
+      
+      return NextResponse.json({ tiendas: tiendas || [] })
+    }
+    
+    // Si no, obtener tiendas asignadas via usuarios_tiendas
+    const { data: asignaciones, error } = await supabase
+      .from('usuarios_tiendas')
+      .select(`
+        tienda_id,
+        tiendas (
+          id,
+          codigo,
+          nombre,
+          zona
+        )
+      `)
+      .eq('usuario_id', userId)
+    
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+    
+    const tiendas = asignaciones?.map(a => a.tiendas).filter(Boolean) || []
+    
+    return NextResponse.json({ tiendas })
+  } catch (error) {
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+}
+```
+
+## FLUJO COMPLETO:
+
+1. Usuario ingresa credenciales en /login
+2. Login exitoso → redirige a /seleccionar-tienda
+3. /seleccionar-tienda verifica:
+   - Si rol no requiere tienda → redirige a /dashboard
+   - Si tiene 1 tienda → asigna automáticamente → redirige a /dashboard
+   - Si tiene múltiples → muestra selector
+4. Usuario selecciona tienda → guarda en localStorage + cookie → redirige a /dashboard
+5. Middleware verifica que usuarios con roles que requieren tienda tengan tienda_activa
+6. En navbar se muestra tienda activa con opción de cambiar
+
+## DISEÑO UI:
+
+Para /seleccionar-tienda usar:
+- Fondo igual al login (bg-muted/40)
+- Card centrada con el contenido
+- Grid de cards para las tiendas (usar shadcn Card)
+- Cada card de tienda con hover effect
+- Colores de zona: SUR = blue, NORTE = green
+
+Implementa todos estos cambios.

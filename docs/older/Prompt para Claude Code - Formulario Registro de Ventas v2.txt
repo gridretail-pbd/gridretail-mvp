@@ -1,0 +1,428 @@
+Prompt para Claude Code - Formulario Registro de Ventas v2
+Claude, necesito reformular completamente el formulario de Registro de Ventas en GridRetail.
+
+## CONTEXTO GENERAL
+
+Este formulario registra ventas declarativas (Boca de Urna) que luego se cruzan con el INAR de Entel para validación y cálculo de comisiones. La tienda ya está seleccionada (tienda_activa en localStorage).
+
+## ARCHIVOS A CREAR/MODIFICAR
+
+### 1. CREAR: lib/constants/tipos-venta.ts
+```typescript
+export const TIPOS_VENTA = [
+  // PORTABILIDAD OSS
+  { codigo: 'OSS_BASE', nombre: 'Porta OSS - Base', categoria: 'POSTPAGO', requiereCedente: true, requiereImei: false, permiteSeguro: false, ayuda: 'Portabilidad de cliente con >30 días en Entel' },
+  { codigo: 'OSS_CAPTURA', nombre: 'Porta OSS - Captura', categoria: 'POSTPAGO', requiereCedente: true, requiereImei: false, permiteSeguro: false, ayuda: 'Portabilidad de cliente nuevo en Entel' },
+  
+  // PORTABILIDAD OPP
+  { codigo: 'OPP_MONO', nombre: 'Porta OPP Mono', categoria: 'POSTPAGO', requiereCedente: true, requiereImei: false, permiteSeguro: false, ayuda: 'Cliente nuevo, primera o única línea portada' },
+  { codigo: 'OPP_CAPTURA', nombre: 'Porta OPP Captura', categoria: 'POSTPAGO', requiereCedente: true, requiereImei: false, permiteSeguro: false, ayuda: 'Cliente nuevo, 2da línea portada en adelante' },
+  { codigo: 'OPP_LLAA', nombre: 'Porta OPP LLAA', categoria: 'POSTPAGO', requiereCedente: true, requiereImei: false, permiteSeguro: false, ayuda: 'Cliente BASE (>30 días) porta línea adicional' },
+  
+  // VENTA REGULAR
+  { codigo: 'VR_MONO', nombre: 'VR Mono', categoria: 'POSTPAGO', requiereCedente: false, requiereImei: false, permiteSeguro: false, ayuda: 'Cliente nuevo, primera o única línea' },
+  { codigo: 'VR_CAPTURA', nombre: 'VR Captura', categoria: 'POSTPAGO', requiereCedente: false, requiereImei: false, permiteSeguro: false, ayuda: 'Cliente nuevo, 2da línea en adelante' },
+  { codigo: 'VR_LLAA', nombre: 'VR LLAA', categoria: 'POSTPAGO', requiereCedente: false, requiereImei: false, permiteSeguro: false, ayuda: 'Cliente BASE (>30 días), línea adicional' },
+  
+  // MISS IN
+  { codigo: 'MISS_IN', nombre: 'Miss In (Pre→Pos Entel)', categoria: 'POSTPAGO', requiereCedente: false, requiereImei: false, permiteSeguro: false, ayuda: 'Línea Prepago Entel se convierte a Pospago' },
+  
+  // PACK SS
+  { codigo: 'PACK_OSS', nombre: 'Pack Porta OSS', categoria: 'PACK_SS', requiereCedente: true, requiereImei: true, permiteSeguro: true, ayuda: 'Portabilidad OSS con equipo incluido' },
+  { codigo: 'PACK_VR', nombre: 'Pack VR', categoria: 'PACK_SS', requiereCedente: false, requiereImei: true, permiteSeguro: true, ayuda: 'Venta Regular con equipo incluido' },
+  
+  // RENOVACIÓN
+  { codigo: 'RENO', nombre: 'Renovación Equipo', categoria: 'RENO', requiereCedente: false, requiereImei: true, permiteSeguro: true, ayuda: 'Renovación de equipo (valida con Ficha de Comisiones)' },
+  
+  // PREPAGO
+  { codigo: 'PREPAGO', nombre: 'Venta Prepago', categoria: 'PREPAGO', requiereCedente: false, requiereImei: false, permiteSeguro: false, ayuda: 'Venta de chip prepago' },
+  { codigo: 'PORTA_PP', nombre: 'Portabilidad Prepago', categoria: 'PREPAGO', requiereCedente: true, requiereImei: false, permiteSeguro: false, ayuda: 'Portabilidad de prepago de otro operador' },
+  
+  // OTROS
+  { codigo: 'ACCESORIOS', nombre: 'Solo Accesorios', categoria: 'OTROS', requiereCedente: false, requiereImei: false, permiteSeguro: false, ayuda: 'Venta solo de accesorios (sin línea)' },
+]
+
+export const CATEGORIAS = ['POSTPAGO', 'PACK_SS', 'RENO', 'PREPAGO', 'OTROS']
+
+export const RANGOS_HORARIOS = [
+  { codigo: '08', nombre: '08:00 - 08:59' },
+  { codigo: '09', nombre: '09:00 - 09:59' },
+  { codigo: '10', nombre: '10:00 - 10:59' },
+  { codigo: '11', nombre: '11:00 - 11:59' },
+  { codigo: '12', nombre: '12:00 - 12:59' },
+  { codigo: '13', nombre: '13:00 - 13:59' },
+  { codigo: '14', nombre: '14:00 - 14:59' },
+  { codigo: '15', nombre: '15:00 - 15:59' },
+  { codigo: '16', nombre: '16:00 - 16:59' },
+  { codigo: '17', nombre: '17:00 - 17:59' },
+  { codigo: '18', nombre: '18:00 - 18:59' },
+  { codigo: '19', nombre: '19:00 - 19:59' },
+  { codigo: '20', nombre: '20:00 - 20:59' },
+  { codigo: '21', nombre: '21:00 - 21:59' },
+]
+
+export const TIPOS_DOCUMENTO = [
+  { codigo: 'DNI', nombre: 'DNI', patron: /^\d{8}$/, placeholder: '12345678' },
+  { codigo: 'CE', nombre: 'Carné Extranjería', patron: /^\d{9}$/, placeholder: '123456789' },
+  { codigo: 'RUC', nombre: 'RUC', patron: /^(10|20)\d{9}$/, placeholder: '10123456789' },
+  { codigo: 'PASAPORTE', nombre: 'Pasaporte', patron: /^[A-Z0-9]{6,12}$/i, placeholder: 'AB123456' },
+  { codigo: 'PTP', nombre: 'PTP', patron: /^[A-Z0-9]{6,15}$/i, placeholder: 'PTP123456' },
+]
+
+// Roles que pueden registrar ventas de fechas anteriores (>1 día)
+export const ROLES_FECHA_LIBRE = ['ADMIN', 'GERENTE_COMERCIAL', 'JEFE_VENTAS', 'BACKOFFICE_OPERACIONES']
+
+// Roles que NO requieren tienda
+export const ROLES_SIN_TIENDA = ['ADMIN', 'GERENTE_GENERAL', 'GERENTE_COMERCIAL', 'BACKOFFICE_OPERACIONES', 'BACKOFFICE_RRHH', 'BACKOFFICE_AUDITORIA', 'CAPACITADOR', 'VALIDADOR_ARRIBOS']
+```
+
+### 2. MODIFICAR: app/(dashboard)/dashboard/ventas/nuevo/page.tsx
+
+Reformular completamente el formulario con las siguientes secciones:
+
+## ESTRUCTURA DEL FORMULARIO
+
+### HEADER
+- Mostrar: "📍 Registrando en: [NOMBRE_TIENDA] ([ZONA])"
+- Si el rol no tiene tienda asignada, mostrar selector de tienda
+
+### SECCIÓN 1: FECHA Y HORA
+┌─────────────────────────────────────────────────────────────────┐
+│ 📅 FECHA Y HORA DE LA VENTA                                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ○ Venta de HOY              ○ Venta de AYER                   │
+│    [fecha automática]           [fecha automática]             │
+│    [rango horario auto]         [rango horario SELECT]         │
+│                                                                 │
+│  (Si AYER):                                                    │
+│  ⚠️ Requiere aprobación y genera incidencia                    │
+│  Motivo del rezago: [] (requerido)             │
+│                                                                 │
+│  (Si rol en ROLES_FECHA_LIBRE, mostrar tercera opción):        │
+│  ○ Otra fecha                                                  │
+│    [date picker hasta 30 días atrás]                           │
+│    [rango horario SELECT]                                      │
+│    Motivo: []                                  │
+│    ☐ Registrar para otro asesor                                │
+│      [SELECT asesor de la tienda/zona]                         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+Lógica:
+- HOY: fecha = hoy, rango_horario = hora actual (automático, no editable)
+- AYER: fecha = ayer, rango_horario = SELECT requerido, motivo requerido, estado = 'pendiente_aprobacion', es_venta_rezagada = true
+- OTRA FECHA: Solo roles en ROLES_FECHA_LIBRE
+
+### SECCIÓN 2: ORDEN DE VENTA (con verificación inteligente)
+┌─────────────────────────────────────────────────────────────────┐
+│ 🔍 ORDEN DE VENTA                                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Número de Orden *                                             │
+│  [_______________] [Verificar]                                 │
+│                                                                 │
+│  Validaciones:                                                 │
+│  - 9 dígitos, empieza con 7                                    │
+│  - Si está muy lejos del correlativo → advertencia             │
+│                                                                 │
+│  (Si la orden YA existe en ventas de hoy):                     │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ ℹ️ Esta orden ya tiene líneas registradas:               │   │
+│  │ • 987654321 | VR_MONO | 10:30 AM | Por: JPEREZ          │   │
+│  │                                                         │   │
+│  │ Cliente: JUAN CARLOS PEREZ RODRIGUEZ                    │   │
+│  │ DNI: 12345678                                           │   │
+│  │                                                         │   │
+│  │ [Agregar otra línea a esta orden]                       │   │
+│  │ [Cancelar - ingresé mal el número]                      │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+Lógica:
+- Al ingresar orden y presionar "Verificar" o perder foco:
+  1. Validar formato (9 dígitos, empieza con 7)
+  2. Buscar en BD si existe la orden en ventas del día
+  3. Si existe: mostrar datos del cliente y líneas, permitir "Agregar otra línea"
+  4. Si es línea adicional: heredar datos del cliente (readonly)
+
+### SECCIÓN 3: IDENTIFICACIÓN (solo si orden es nueva o agregando línea)
+┌─────────────────────────────────────────────────────────────────┐
+│ 👤 DATOS DE IDENTIFICACIÓN                                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Teléfono / Línea *          (siempre editable)                │
+│  []                                                 │
+│  ℹ️ 9 dígitos, empieza con 9                                   │
+│                                                                 │
+│  (Los siguientes son readonly si es línea adicional):          │
+│                                                                 │
+│  Tipo Documento *            Número Documento *                │
+│  [DNI ▼]                     []                     │
+│                                                                 │
+│  Nombre del Cliente *                                          │
+│  [________________________________]                            │
+│  ℹ️ Como aparece en el documento                               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+### SECCIÓN 4: CLASIFICACIÓN
+┌─────────────────────────────────────────────────────────────────┐
+│ 📊 CLASIFICACIÓN DE LA VENTA                                   │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Tipo de Venta *                    [?] ← Icono ayuda          │
+│  [SELECT agrupado por categoría]                               │
+│                                                                 │
+│  Al hacer hover o click en [?]:                                │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ VENTA REGULAR (VR):                                     │   │
+│  │ • VR_MONO: Cliente NUEVO, primera o única línea         │   │
+│  │ • VR_CAPTURA: Cliente NUEVO, 2da línea en adelante      │   │
+│  │ • VR_LLAA: Cliente BASE (>30 días en Entel)             │   │
+│  │                                                         │   │
+│  │ PORTABILIDAD:                                           │   │
+│  │ • OSS = Origen Pospago (del otro operador)              │   │
+│  │ • OPP = Origen Prepago (del otro operador)              │   │
+│  │ • BASE = Cliente con >30 días en Entel                  │   │
+│  │ • CAPTURA = Cliente nuevo en Entel                      │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  (Si tipo requiere cedente - OSS_, OPP_, PORTA_PP):          │
+│  Operador Cedente *                                            │
+│  [MOVISTAR ▼]  (cargar de tabla operadores_cedentes)           │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+### SECCIÓN 5: EQUIPO Y SEGURO (condicional)
+┌─────────────────────────────────────────────────────────────────┐
+│ 📱 EQUIPO Y SEGURO                                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  (Visible si tipo = PACK_, RENO, o permite equipo)            │
+│                                                                 │
+│  IMEI Equipo *               Modelo Equipo                     │
+│  []           []                 │
+│  ℹ️ 15 dígitos                                                 │
+│                                                                 │
+│  (Si tipo permite seguro - PACK_, RENO):                      │
+│  ☐ Incluye Seguro MEP                                          │
+│                                                                 │
+│  ─────────────────────────────────────────────────────────────  │
+│                                                                 │
+│  (Si tipo NO es RENO ni ACCESORIOS - tiene chip):              │
+│  ICCID Chip                                                    │
+│  []                                     │
+│  ℹ️ 19-20 dígitos (opcional)                                   │
+│                                                                 │
+│  ─────────────────────────────────────────────────────────────  │
+│                                                                 │
+│  (Siempre visible):                                            │
+│  ☐ Incluye accesorios                                          │
+│                                                                 │
+│  (Si marca accesorios):                                        │
+│  Descripción Accesorios                                        │
+│  [_________]                            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+### SECCIÓN 6: OBSERVACIONES
+┌─────────────────────────────────────────────────────────────────┐
+│ 📝 OBSERVACIONES (opcional)                                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [textarea - max 500 caracteres]                               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+### BOTONES DE ACCIÓN
+[Registrar Venta]  [Limpiar Formulario]
+Después de guardar exitoso:
+
+Toast: "✅ Venta registrada correctamente"
+Mostrar resumen con opción: [Registrar otra venta] [Ver mis ventas]
+
+
+## LÓGICA DE GUARDADO
+```typescript
+const guardarVenta = async (values) => {
+  const usuario = getUsuarioFromLocalStorage()
+  const tiendaActiva = getTiendaActiva()
+  
+  // Determinar estados según fecha
+  const esHoy = values.fecha === hoy
+  const esAyer = values.fecha === ayer
+  const esRezagada = !esHoy
+  
+  // Determinar categoría y fuente de validación
+  const tipoConfig = TIPOS_VENTA.find(t => t.codigo === values.tipo_venta)
+  
+  const ventaData = {
+    // Automáticos
+    tienda_id: tiendaActiva?.id || values.tienda_id,
+    usuario_id: values.asesor_real_id || usuario?.id,
+    codigo_asesor: values.asesor_real_codigo || usuario?.codigo_asesor,
+    registrado_por: usuario?.id,
+    
+    // Fecha y hora
+    fecha: values.fecha,
+    rango_horario: values.rango_horario,
+    timestamp_registro: new Date().toISOString(),
+    es_venta_rezagada: esRezagada,
+    motivo_rezago: esRezagada ? values.motivo_rezago : null,
+    
+    // Estado
+    estado: esRezagada && !ROLES_FECHA_LIBRE.includes(usuario?.rol) 
+      ? 'pendiente_aprobacion' 
+      : 'registrada',
+    
+    // Identificación
+    orden_venta: values.orden_venta,
+    telefono_linea: values.telefono_linea,
+    tipo_documento_cliente: values.tipo_documento,
+    numero_documento_cliente: values.numero_documento,
+    nombre_cliente: values.nombre_cliente,
+    
+    // Clasificación
+    tipo_venta: values.tipo_venta,
+    categoria_venta: tipoConfig?.categoria,
+    fuente_validacion: tipoConfig?.fuenteValidacion,
+    operador_cedente: values.operador_cedente || null,
+    
+    // Equipo
+    imei_equipo: values.imei_equipo || null,
+    modelo_equipo: values.modelo_equipo || null,
+    iccid_chip: values.iccid_chip || null,
+    
+    // Seguro
+    incluye_seguro: values.incluye_seguro || false,
+    tipo_seguro: values.tipo_seguro || null,
+    
+    // Accesorios
+    incluye_accesorios: values.incluye_accesorios || false,
+    descripcion_accesorios: values.descripcion_accesorios || null,
+    
+    // Otros
+    notas: values.notas || null,
+    estado_cruce: 'PENDIENTE',
+  }
+  
+  // Guardar
+  const { data, error } = await supabase
+    .from('ventas')
+    .insert(ventaData)
+    .select()
+    .single()
+  
+  // Si es rezagada, crear incidencia
+  if (esRezagada && data) {
+    await supabase.from('asesor_incidencias').insert({
+      usuario_id: ventaData.usuario_id,
+      tipo_incidencia: 'VENTA_REZAGADA',
+      puntos: 1,
+      fecha: ventaData.fecha,
+      detalle: `Venta del ${values.fecha} registrada el ${hoy}. Motivo: ${values.motivo_rezago}`,
+      referencia_tipo: 'venta',
+      referencia_id: data.id,
+      registrado_por: usuario?.id,
+    })
+  }
+  
+  return data
+}
+```
+
+## API ENDPOINTS NECESARIOS
+
+### 3. CREAR: app/api/ventas/verificar-orden/route.ts
+Endpoint para verificar si una orden ya existe:
+```typescript
+// GET /api/ventas/verificar-orden?orden=712345678&fecha=2026-01-15
+// Response si existe:
+{
+  existe: true,
+  lineas: [
+    { telefono: '987654321', tipo_venta: 'VR_MONO', rango_horario: '10', asesor: 'JPEREZ' }
+  ],
+  cliente: {
+    nombre: 'JUAN CARLOS PEREZ RODRIGUEZ',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  }
+}
+// Response si no existe:
+{ existe: false }
+```
+
+### 4. CREAR: app/api/operadores-cedentes/route.ts
+Endpoint para obtener lista de operadores cedentes activos.
+
+## VALIDACIONES CON ZOD
+```typescript
+const ventaSchema = z.object({
+  // Fecha
+  fecha: z.string(),
+  rango_horario: z.string().length(2),
+  motivo_rezago: z.string().optional(),
+  
+  // Orden
+  orden_venta: z.string()
+    .regex(/^7\d{8}$/, 'Debe ser 9 dígitos y empezar con 7'),
+  
+  // Identificación
+  telefono_linea: z.string()
+    .regex(/^9\d{8}$/, 'Debe ser 9 dígitos y empezar con 9'),
+  tipo_documento: z.enum(['DNI', 'CE', 'RUC', 'PASAPORTE', 'PTP']),
+  numero_documento: z.string().min(6).max(15),
+  nombre_cliente: z.string().min(3).max(100),
+  
+  // Clasificación
+  tipo_venta: z.string(),
+  operador_cedente: z.string().optional(),
+  
+  // Equipo
+  imei_equipo: z.string().regex(/^\d{15}$/).optional().or(z.literal('')),
+  modelo_equipo: z.string().optional(),
+  iccid_chip: z.string().regex(/^\d{19,20}$/).optional().or(z.literal('')),
+  
+  // Seguro y accesorios
+  incluye_seguro: z.boolean().default(false),
+  incluye_accesorios: z.boolean().default(false),
+  descripcion_accesorios: z.string().optional(),
+  
+  // Otros
+  notas: z.string().max(500).optional(),
+}).refine((data) => {
+  // Validar documento según tipo
+  const tipoDoc = TIPOS_DOCUMENTO.find(t => t.codigo === data.tipo_documento)
+  return tipoDoc?.patron.test(data.numero_documento)
+}, {
+  message: 'Formato de documento inválido',
+  path: ['numero_documento']
+}).refine((data) => {
+  // Si es rezagada, requiere motivo
+  const hoy = new Date().toISOString().split('T')[0]
+  if (data.fecha < hoy && !data.motivo_rezago) {
+    return false
+  }
+  return true
+}, {
+  message: 'Debe indicar el motivo del registro tardío',
+  path: ['motivo_rezago']
+})
+```
+
+## DISEÑO UI
+
+- Usar shadcn/ui components
+- Layout responsivo: 2 columnas en desktop para campos cortos
+- Secciones con Card y CardHeader
+- Campos obligatorios con asterisco rojo
+- Tooltips de ayuda con icono (?)
+- Select agrupados por categoría para tipo_venta
+- Toast para mensajes de éxito/error
+- Skeleton loading mientras verifica orden
+- Badges para estados (pendiente_aprobacion = amarillo, registrada = verde)
+
+Implementa todos estos cambios.

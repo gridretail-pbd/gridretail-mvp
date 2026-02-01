@@ -1,0 +1,18 @@
+Claude Code respondió el prompt luego de ejecutarlo:
+
+He completado todos los cambios para el flujo de autenticación con selección de tienda. Aquí está el resumen:
+Archivos creados:
+* app/(auth)/seleccionar-tienda/page.tsx - Página de selección de tienda
+* app/api/usuarios/[id]/tiendas/route.ts - API para obtener tiendas del usuario
+Archivos modificados:
+* app/(auth)/login/page.tsx - Redirección a /seleccionar-tienda después del login
+* middleware.ts - Verificación de tienda_activa para roles que la requieren
+* lib/auth-client.ts - Funciones getTiendaActiva(), setTiendaActiva(), clearTiendaActiva() y logout actualizado
+* components/layout/navbar.tsx - Selector de tienda con dropdown y confirmación de cambio
+Flujo implementado:
+1. Login exitoso → redirige a /seleccionar-tienda
+2. Si el rol no requiere tienda → redirige directo a /dashboard
+3. Si tiene 1 sola tienda → se asigna automáticamente
+4. Si tiene múltiples → muestra grid de cards para seleccionar
+5. Middleware verifica tienda_activa para rutas protegidas
+6. Navbar muestra tienda activa con opción de cambiar (si tiene múltiples)
