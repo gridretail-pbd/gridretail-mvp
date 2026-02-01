@@ -292,9 +292,6 @@ export default function NuevoArriboPage() {
     const tienda = getTiendaActiva()
     if (tienda) {
       setTiendaActiva(tienda)
-    } else {
-      // Si no hay tienda seleccionada, redirigir a seleccionar tienda
-      router.push('/seleccionar-tienda')
     }
   }, [router])
 
@@ -374,10 +371,21 @@ export default function NuevoArriboPage() {
     }
   }
 
-  if (!user || !tiendaActiva) {
+  if (!user) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-muted-foreground">Cargando...</div>
+      </div>
+    )
+  }
+
+  if (!tiendaActiva) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center space-y-2">
+          <Store className="h-8 w-8 mx-auto text-muted-foreground" />
+          <p className="text-muted-foreground">Selecciona una tienda desde el menú superior para continuar.</p>
+        </div>
       </div>
     )
   }
