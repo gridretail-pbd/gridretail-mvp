@@ -176,8 +176,8 @@ export default function RegistroPenalidadPage() {
         if (error) throw error
 
         const userOptions: UserOption[] = (data || []).map(u => {
-          const mainStore = u.usuarios_tiendas?.find((ut: { es_principal: boolean }) => ut.es_principal)
-          const store = mainStore?.tienda || u.usuarios_tiendas?.[0]?.tienda
+          const mainStore = u.usuarios_tiendas?.find((ut: any) => ut.es_principal)
+          const store = (mainStore?.tienda || u.usuarios_tiendas?.[0]?.tienda) as unknown as { id: string; nombre: string } | undefined
 
           return {
             id: u.id,

@@ -44,8 +44,9 @@ export function UsuarioForm({ mode, usuario, currentUserRol, onSuccess, onCancel
 
   const schema = mode === 'crear' ? crearUsuarioSchema : editarUsuarioSchema
 
-  const form = useForm<CrearUsuarioFormData | EditarUsuarioFormData>({
-    resolver: zodResolver(schema),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const form = useForm<any>({
+    resolver: zodResolver(schema) as any,
     defaultValues: mode === 'editar' && usuario ? {
       codigo_asesor: usuario.codigo_asesor,
       dni: usuario.dni || '',

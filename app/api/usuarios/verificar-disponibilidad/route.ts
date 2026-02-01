@@ -15,16 +15,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Campo inválido' }, { status: 400 })
     }
 
-    let query = supabase
-      .from('usuarios')
-      .select('id')
-      .eq(campo, valor)
-
-    if (excluir_id) {
-      query = query.neq('id', excluir_id)
-    }
-
-    const { data } = await query.maybeSingle()
+    // Buscar por campo dinámico usando queries separadas para evitar deep type inference
+    const { data } = excluir_id
+      ? await supabase.from('usuarios').select('id').eq(campo as 'id', valor).neq('id', excluir_id).maybeSingle()
+      : await supabase.from('usuarios').select('id').eq(campo as 'id', valor).maybeSingle()
 
     return NextResponse.json({
       disponible: !data,

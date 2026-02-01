@@ -455,8 +455,8 @@ export function calculateDistributionStats(penalties: HCPenalty[]): {
     totalCount: penalties.length,
     totalAmount,
     avgPerHC: totalAmount / hcTotals.length,
-    maxPerHC: sortedByAmount[0] || { userId: '', userName: '', amount: 0 },
-    minPerHC: sortedByAmount[sortedByAmount.length - 1] || { userId: '', userName: '', amount: 0 },
+    maxPerHC: sortedByAmount[0] ? { userId: sortedByAmount[0].userId, userName: sortedByAmount[0].userName, amount: sortedByAmount[0].totalAmount } : { userId: '', userName: '', amount: 0 },
+    minPerHC: sortedByAmount.length > 0 ? { userId: sortedByAmount[sortedByAmount.length - 1].userId, userName: sortedByAmount[sortedByAmount.length - 1].userName, amount: sortedByAmount[sortedByAmount.length - 1].totalAmount } : { userId: '', userName: '', amount: 0 },
     affectedHCCount: hcTotals.length
   }
 }

@@ -567,9 +567,10 @@ export function useStoreAdvisors(storeId: string | null) {
       if (queryError) throw queryError
 
       // Extraer usuarios del resultado del join y filtrar nulls
+      type UsuarioRow = { id: string; codigo_asesor: string; nombre_completo: string; rol: string; zona: string }
       const usuarios = (data || [])
-        .map(item => item.usuario)
-        .filter((u): u is NonNullable<typeof u> => u !== null)
+        .map(item => item.usuario as unknown as UsuarioRow | null)
+        .filter((u): u is UsuarioRow => u !== null)
         .sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo))
 
       setAdvisors(usuarios)

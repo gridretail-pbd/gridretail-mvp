@@ -185,7 +185,7 @@ export default function DistribucionPage() {
 
       // Filtrar usuarios activos con roles válidos
       const advisors = (usuariosTiendas || [])
-        .map(ut => ut.usuario)
+        .map(ut => ut.usuario as unknown as { id: string; codigo_asesor: string; nombre_completo: string; rol: string; zona: string } | null)
         .filter((u): u is NonNullable<typeof u> =>
           u !== null &&
           ['ASESOR', 'ASESOR_REFERENTE'].includes(u.rol)

@@ -57,17 +57,17 @@ type TipoDocumento = (typeof TIPOS_DOCUMENTO)[number]['value']
 const arriboSchema = z
   .object({
     tipo_documento: z.enum(['NO_PROPORCIONADO', 'DNI', 'CE', 'OTRO'], {
-      required_error: 'Selecciona el tipo de documento',
+      message: 'Selecciona el tipo de documento',
     }),
     numero_documento: z.string().optional(),
     es_cliente_entel: z.enum(['SI', 'NO', 'NO_SABE'], {
-      required_error: 'Indica si es cliente Entel',
+      message: 'Indica si es cliente Entel',
     }),
     tipo_visita: z.enum(['VENTA', 'POSVENTA'], {
-      required_error: 'Selecciona el tipo de visita',
+      message: 'Selecciona el tipo de visita',
     }),
     concreto_operacion: z.enum(['SI', 'NO'], {
-      required_error: 'Indica si concretó operación',
+      message: 'Indica si concretó operación',
     }),
     se_vendio: z.enum(['SI', 'NO']).optional(),
     motivo_no_venta: z.string().optional(),
@@ -93,7 +93,7 @@ const arriboSchema = z
     (data) => {
       // Si tipo_visita es VENTA, se_vendio es obligatorio
       if (data.tipo_visita === 'VENTA') {
-        return data.se_vendio !== undefined && data.se_vendio !== ''
+        return data.se_vendio !== undefined
       }
       return true
     },

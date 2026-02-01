@@ -234,7 +234,7 @@ export default function ConfiguracionPenalidadesPage() {
       case 'fixed':
         return `Monto fijo: S/ ${equivalence.transfer_fixed_amount?.toFixed(2)}`
       case 'partial_count':
-        return `Máx ${equivalence.max_incidents_per_month} incidencias/mes`
+        return `Máx ${equivalence.max_incidents} incidencias/mes`
       default:
         return 'Desconocido'
     }
