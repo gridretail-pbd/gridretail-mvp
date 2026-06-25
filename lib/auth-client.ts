@@ -50,6 +50,7 @@ export function clearTiendaActiva() {
 export async function logout() {
   localStorage.removeItem('user')
   localStorage.removeItem('tienda_activa')
+  localStorage.removeItem('modo_tienda')
 
   // Eliminar cookies server-side para que el middleware no redirija a seleccionar-tienda
   try {

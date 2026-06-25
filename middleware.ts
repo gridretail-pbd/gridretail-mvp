@@ -15,17 +15,14 @@ const ROLES_SIN_TIENDA = [
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Public routes that don't require authentication
-  const publicRoutes = ['/login']
-  const isPublicRoute = publicRoutes.some((route) =>
-    pathname.startsWith(route)
-  )
+  // Public routes that don't require a user session.
+  // /modo-tienda y /enrolar-dispositivo son el flujo de equipos compartidos (Nivel 1/2).
+  const publicRoutes = ['/login', '/modo-tienda', '/enrolar-dispositivo']
+  const isPublicRoute = publicRoutes.some((route) => pathname.startsWith(route))
 
   // Routes that don't require store selection
-  const rutasSinTienda = ['/login', '/seleccionar-tienda']
-  const isRutaSinTienda = rutasSinTienda.some((route) =>
-    pathname.startsWith(route)
-  )
+  const rutasSinTienda = ['/login', '/seleccionar-tienda', '/modo-tienda', '/enrolar-dispositivo']
+  const isRutaSinTienda = rutasSinTienda.some((route) => pathname.startsWith(route))
 
   // Get our custom session cookie
   const sessionCookie = request.cookies.get('session')
@@ -34,6 +31,10 @@ export async function middleware(request: NextRequest) {
   // Get tienda_activa cookie
   const tiendaCookie = request.cookies.get('tienda_activa')
   const hasTienda = !!tiendaCookie?.value
+
+  // Get device enrollment cookie (Nivel 1: equipo atado a una tienda)
+  const deviceCookie = request.cookies.get('device_token')
+  const hasDevice = !!deviceCookie?.value
 
   // Get user role from session cookie
   let userRole: string | null = null
@@ -46,37 +47,41 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  console.log('Middleware - Path:', pathname, '- Has session:', hasSession, '- Has tienda:', hasTienda, '- Role:', userRole)
+  console.log(
+    'Middleware - Path:', pathname,
+    '- Has session:', hasSession,
+    '- Has tienda:', hasTienda,
+    '- Has device:', hasDevice,
+    '- Role:', userRole
+  )
 
-  // Redirect to login if trying to access protected route without session
+  // Sin sesión en ruta protegida: a Modo Tienda si el equipo está enrolado, si no a Login.
   if (!hasSession && !isPublicRoute && pathname !== '/') {
-    console.log('Middleware - Redirecting to login (no session)')
-    const redirectUrl = new URL('/login', request.url)
-    return NextResponse.redirect(redirectUrl)
+    const dest = hasDevice ? '/modo-tienda' : '/login'
+    console.log(`Middleware - Redirecting to ${dest} (no session)`)
+    return NextResponse.redirect(new URL(dest, request.url))
   }
 
-  // Redirect to seleccionar-tienda if logged in and trying to access login
+  // Con sesión en una pantalla de acceso: enviar a la app.
   if (hasSession && isPublicRoute) {
     console.log('Middleware - Redirecting to seleccionar-tienda (has session)')
-    const redirectUrl = new URL('/seleccionar-tienda', request.url)
-    return NextResponse.redirect(redirectUrl)
+    return NextResponse.redirect(new URL('/seleccionar-tienda', request.url))
   }
 
-  // Redirect root to seleccionar-tienda if logged in, otherwise to login
+  // Raíz
   if (pathname === '/') {
-    const redirectUrl = new URL(hasSession ? '/seleccionar-tienda' : '/login', request.url)
-    return NextResponse.redirect(redirectUrl)
+    const dest = hasSession ? '/seleccionar-tienda' : hasDevice ? '/modo-tienda' : '/login'
+    return NextResponse.redirect(new URL(dest, request.url))
   }
 
-  // Check if user needs store but doesn't have one selected
+  // Sesión activa pero sin tienda seleccionada (y el rol la requiere).
   if (hasSession && !isRutaSinTienda && !hasTienda) {
-    // Check if user role requires store selection
     const requiresTienda = userRole && !ROLES_SIN_TIENDA.includes(userRole)
-
     if (requiresTienda) {
-      console.log('Middleware - Redirecting to seleccionar-tienda (no tienda selected)')
-      const redirectUrl = new URL('/seleccionar-tienda', request.url)
-      return NextResponse.redirect(redirectUrl)
+      // En equipos enrolados la tienda se deriva del dispositivo (Modo Tienda).
+      const dest = hasDevice ? '/modo-tienda' : '/seleccionar-tienda'
+      console.log(`Middleware - Redirecting to ${dest} (no tienda selected)`)
+      return NextResponse.redirect(new URL(dest, request.url))
     }
   }
 
