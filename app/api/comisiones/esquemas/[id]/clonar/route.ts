@@ -76,7 +76,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       )
     }
 
-    // Clonar partidas
+    // Clonar partidas (incluyendo todos los campos v3.x)
     const { data: originalItems } = await supabase
       .from('commission_scheme_items')
       .select('*')
@@ -86,6 +86,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const newItems = originalItems.map(item => ({
         scheme_id: newScheme.id,
         item_type_id: item.item_type_id,
+        preset_id: item.preset_id,
+        custom_name: item.custom_name,
+        custom_description: item.custom_description,
         original_label: item.original_label,
         quota: item.quota,
         quota_amount: item.quota_amount,
@@ -99,6 +102,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         is_active: item.is_active,
         display_order: item.display_order,
         notes: item.notes,
+        // Campos v3.x
+        contribution_type: item.contribution_type,
+        range_source: item.range_source,
+        uses_conversion_table: item.uses_conversion_table,
+        accelerator_ranges: item.accelerator_ranges,
+        overcompliance_mode: item.overcompliance_mode,
+        cap_units: item.cap_units,
+        pxq_bonus_amount: item.pxq_bonus_amount,
+        overcap_max_units: item.overcap_max_units,
+        overcap_max_amount: item.overcap_max_amount,
+        measurement_type: item.measurement_type,
+        fulfillment_method: item.fulfillment_method,
+        measurement_config: item.measurement_config,
+        variable_source: item.variable_source,
       }))
 
       const { data: insertedItems, error: itemsError } = await supabase
@@ -156,6 +173,55 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           await supabase
             .from('commission_pxq_scales')
             .insert(newScales)
+        }
+
+        // Clonar mapeos de tipos de venta
+        const { data: originalVentas } = await supabase
+          .from('commission_item_ventas')
+          .select('*')
+          .in('scheme_item_id', originalItems.map(i => i.id))
+
+        if (originalVentas && originalVentas.length > 0) {
+          const newVentas = originalVentas.map(venta => ({
+            scheme_item_id: itemIdMap.get(venta.scheme_item_id),
+            tipo_venta_id: venta.tipo_venta_id,
+            cuenta_linea: venta.cuenta_linea,
+            cuenta_equipo: venta.cuenta_equipo,
+          }))
+
+          await supabase
+            .from('commission_item_ventas')
+            .insert(newVentas)
+        }
+
+        // Clonar multiplicadores (v3.4)
+        const { data: originalMultipliers } = await supabase
+          .from('commission_item_multipliers')
+          .select('*')
+          .in('item_id', originalItems.map(i => i.id))
+
+        if (originalMultipliers && originalMultipliers.length > 0) {
+          const newMultipliers = originalMultipliers.map(mult => ({
+            item_id: itemIdMap.get(mult.item_id),
+            multiplier_type: mult.multiplier_type,
+            activation_criteria: mult.activation_criteria,
+            source_description: mult.source_description,
+            source_item_id: mult.source_item_id,
+            threshold_value: mult.threshold_value,
+            factor_if_met: mult.factor_if_met,
+            factor_if_not_met: mult.factor_if_not_met,
+            tiered_ranges: mult.tiered_ranges,
+            operator_cedente: mult.operator_cedente,
+            measurement_type: mult.measurement_type,
+            measurement_config: mult.measurement_config,
+            is_active: mult.is_active,
+            display_order: mult.display_order,
+            notes: mult.notes,
+          }))
+
+          await supabase
+            .from('commission_item_multipliers')
+            .insert(newMultipliers)
         }
       }
     }

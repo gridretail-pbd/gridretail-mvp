@@ -2,9 +2,12 @@
 
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useState } from 'react'
+import { ChevronDown, ChevronRight, Settings2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Form,
   FormControl,
@@ -23,7 +26,8 @@ import {
 } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { schemeFormSchema, type SchemeFormValues } from '@/lib/comisiones/validations'
-import { MONTHS, SCHEME_TYPE_LABELS, type SchemeType, generateSchemeCode } from '@/lib/comisiones'
+import { MONTHS, SCHEME_TYPE_LABELS, type SchemeType, generateSchemeCode, ACCELERATOR_BASE_LABELS } from '@/lib/comisiones'
+import { ConversionTableEditor } from './ConversionTableEditor'
 import { useEffect } from 'react'
 
 interface SchemeFormProps {
@@ -39,6 +43,7 @@ export function SchemeForm({
   isLoading,
   submitLabel = 'Guardar',
 }: SchemeFormProps) {
+  const [advancedOpen, setAdvancedOpen] = useState(!!defaultValues?.conversion_table || !!defaultValues?.accelerator_base)
   const currentYear = new Date().getFullYear()
   const currentMonth = new Date().getMonth() + 1
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 1 + i)
@@ -329,6 +334,98 @@ export function SchemeForm({
               />
             </div>
           </CardContent>
+        </Card>
+
+        {/* Configuración Avanzada */}
+        <Card>
+          <CardHeader
+            className="cursor-pointer"
+            onClick={() => setAdvancedOpen(!advancedOpen)}
+          >
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Settings2 className="h-4 w-4" />
+              Configuración Avanzada
+              {advancedOpen ? (
+                <ChevronDown className="h-4 w-4 ml-auto" />
+              ) : (
+                <ChevronRight className="h-4 w-4 ml-auto" />
+              )}
+            </CardTitle>
+          </CardHeader>
+          {advancedOpen && (
+            <CardContent className="space-y-6">
+              {/* Tabla de conversión */}
+              <FormField
+                control={form.control}
+                name="conversion_table"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        checked={!!field.value}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            field.onChange({
+                              ranges: [
+                                { min: 0, max: 69.99, effective: 0, label: '' },
+                                { min: 70, max: 79.99, effective: 70, label: '' },
+                                { min: 80, max: 94.99, effective: 80, label: '' },
+                                { min: 95, max: 100, effective: 100, label: 'Meta' },
+                                { min: 100.01, max: 999999, effective: '+10', label: '' },
+                              ],
+                            })
+                          } else {
+                            field.onChange(null)
+                          }
+                        }}
+                      />
+                      <FormLabel className="!mt-0">Usar tabla de conversión</FormLabel>
+                    </div>
+                    <FormDescription>
+                      Convierte el % cumplimiento real a un % efectivo por tramos
+                    </FormDescription>
+                    {field.value && (
+                      <ConversionTableEditor
+                        value={field.value.ranges}
+                        onChange={(ranges) => field.onChange({ ...field.value, ranges })}
+                      />
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/* Accelerator base */}
+              <FormField
+                control={form.control}
+                name="accelerator_base"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Base para aceleradores</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      value={field.value || 'VARIABLE_TEORICO'}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.entries(ACCELERATOR_BASE_LABELS).map(([val, label]) => (
+                          <SelectItem key={val} value={val}>{label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      Qué monto toma como base el efecto ±% de los aceleradores
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </CardContent>
+          )}
         </Card>
 
         {/* Resumen */}

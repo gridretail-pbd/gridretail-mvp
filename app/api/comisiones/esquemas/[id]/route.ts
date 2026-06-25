@@ -34,7 +34,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .from('commission_scheme_items')
       .select(`
         *,
-        item_type:commission_item_types(*)
+        item_type:commission_item_types(*),
+        preset:partition_presets(id, code, name, default_category, default_calculation_type)
       `)
       .eq('scheme_id', id)
       .order('display_order')
@@ -71,11 +72,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const { id } = await params
     const supabase = await createClient()
     const body = await request.json()
+    const { redistribute_quotas, ...updateData } = body
 
     // Verificar que el esquema existe y está en draft
     const { data: existing } = await supabase
       .from('commission_schemes')
-      .select('id, status')
+      .select('id, status, total_ss_quota')
       .eq('id', id)
       .single()
 
@@ -93,10 +95,67 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       )
     }
 
+    // Redistribución de cuotas: se activa cuando el usuario marca el checkbox
+    // Usa el nuevo total_ss_quota, o el existente si no cambió
+    const targetTotalQuota = updateData.total_ss_quota ?? existing.total_ss_quota
+    const shouldRedistribute = redistribute_quotas && targetTotalQuota > 0
+    let quotasWereRedistributed = false
+
+    if (shouldRedistribute) {
+      // Obtener partidas activas con nombres para identificar principales
+      const { data: items } = await supabase
+        .from('commission_scheme_items')
+        .select(`
+          id,
+          quota,
+          custom_name,
+          preset:partition_presets(name),
+          item_type:commission_item_types(name, code)
+        `)
+        .eq('scheme_id', id)
+        .eq('is_active', true)
+
+      if (items && items.length > 0) {
+        // Las partidas principales son OSS, OPP, VR - identificadas por nombre/código
+        const ssPatterns = ['OSS', 'OPP', 'VR_', 'VR ']
+        const principalItems = items.filter(item => {
+          const name = (
+            item.custom_name ||
+            (item.preset as any)?.name ||
+            (item.item_type as any)?.name ||
+            (item.item_type as any)?.code ||
+            ''
+          ).toUpperCase()
+          return ssPatterns.some(pattern => name.includes(pattern))
+        })
+
+        // Calcular suma actual de cuotas principales
+        const currentSum = principalItems.reduce((sum, item) => sum + (item.quota || 0), 0)
+
+        // Solo redistribuir si hay desajuste (suma actual != target)
+        if (currentSum > 0 && currentSum !== targetTotalQuota) {
+          // Calcular factor de redistribución
+          const factor = targetTotalQuota / currentSum
+
+          // Actualizar cada partida principal proporcionalmente
+          for (const item of principalItems) {
+            if (item.quota) {
+              const newQuota = Math.round(item.quota * factor)
+              await supabase
+                .from('commission_scheme_items')
+                .update({ quota: newQuota })
+                .eq('id', item.id)
+            }
+          }
+          quotasWereRedistributed = true
+        }
+      }
+    }
+
     // Actualizar esquema
     const { data: scheme, error } = await supabase
       .from('commission_schemes')
-      .update(body)
+      .update(updateData)
       .eq('id', id)
       .select()
       .single()
@@ -112,6 +171,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       success: true,
       scheme,
+      quotas_redistributed: quotasWereRedistributed,
     })
   } catch (error) {
     console.error('Error interno:', error)

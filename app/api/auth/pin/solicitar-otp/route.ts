@@ -30,11 +30,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 })
     }
 
-    // usuarios_rrhh.id === usuarios.id (extensión 1:1). Teléfono para el OTP.
+    // La ficha se enlaza a la cuenta por usuario_id (migración 033). Teléfono OTP.
     const { data: rrhh } = await supabase
       .from('usuarios_rrhh')
       .select('telefono_personal')
-      .eq('id', usuario_id)
+      .eq('usuario_id', usuario_id)
       .maybeSingle()
 
     const telefono = rrhh?.telefono_personal

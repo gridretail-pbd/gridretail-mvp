@@ -17,6 +17,7 @@ import {
   Calculator,
   Wallet,
   AlertTriangle,
+  Briefcase,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -118,6 +119,18 @@ const navSections: NavSection[] = [
         href: '/inar/importar',
         icon: FileUp,
         roles: ['BACKOFFICE_OPERACIONES', 'GERENTE_COMERCIAL', 'GERENTE_GENERAL', 'ADMIN'],
+      },
+    ],
+  },
+  // RRHH
+  {
+    title: 'RRHH',
+    items: [
+      {
+        title: 'Gestión RRHH',
+        href: '/rrhh',
+        icon: Briefcase,
+        roles: ['ADMIN', 'GERENTE_GENERAL', 'GERENTE_COMERCIAL', 'JEFE_VENTAS', 'SUPERVISOR', 'COORDINADOR', 'BACKOFFICE_RRHH'],
       },
     ],
   },

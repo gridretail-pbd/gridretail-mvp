@@ -56,6 +56,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .eq('scheme_item_id', itemId)
       .order('display_order')
 
+    // Obtener multiplicadores
+    const { data: multipliers } = await supabase
+      .from('commission_item_multipliers')
+      .select('*')
+      .eq('item_id', itemId)
+      .order('display_order')
+
     // Transformar tipos de venta a formato limpio
     const tiposVenta = (item.commission_item_ventas || []).map((civ: {
       id: string
@@ -80,6 +87,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         commission_item_ventas: undefined,
         locks: locks || [],
         pxq_scales: pxqScales || [],
+        multipliers: multipliers || [],
       },
     })
   } catch (error) {
@@ -131,7 +139,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const allowedFields = [
       'item_type_id', 'preset_id', 'custom_name', 'custom_description',
       'quota', 'weight', 'mix_factor', 'variable_amount', 'min_fulfillment',
-      'has_cap', 'cap_percentage', 'cap_amount', 'is_active', 'display_order', 'notes'
+      'has_cap', 'cap_percentage', 'cap_amount', 'is_active', 'display_order', 'notes',
+      'contribution_type', 'range_source', 'uses_conversion_table', 'accelerator_ranges',
+      'measurement_type', 'fulfillment_method', 'measurement_config',
+      'overcompliance_mode', 'cap_units', 'pxq_bonus_amount', 'overcap_max_units', 'overcap_max_amount',
+      'variable_source'
     ]
 
     for (const field of allowedFields) {
@@ -257,6 +269,13 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       .eq('scheme_item_id', itemId)
       .order('display_order')
 
+    // Obtener multiplicadores
+    const { data: multipliers } = await supabase
+      .from('commission_item_multipliers')
+      .select('*')
+      .eq('item_id', itemId)
+      .order('display_order')
+
     return NextResponse.json({
       success: true,
       item: {
@@ -264,6 +283,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         tipos_venta: tiposVenta,
         locks: locks || [],
         pxq_scales: pxqScales || [],
+        multipliers: multipliers || [],
       },
     })
   } catch (error) {

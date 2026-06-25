@@ -1,13 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod'
 import {
   MapPin,
-  Calendar,
   Search,
   User,
   Tag,
@@ -18,8 +17,11 @@ import {
   CheckCircle2,
   Loader2,
   Info,
+  Link2,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { getUsuarioFromLocalStorage, getTiendaActiva, TiendaActiva } from '@/lib/auth-client'
+import { TablaArribosVendibles } from '@/components/ventas/TablaArribosVendibles'
 import {
   RANGOS_HORARIOS,
   TIPOS_DOCUMENTO,
@@ -28,7 +30,6 @@ import {
   getRangoHorarioActual,
   validarDocumento,
   getFechaHoy,
-  getFechaAyer,
   ORDEN_VENTA_PATTERN,
   ORDEN_VENTA_MESSAGE,
 } from '@/lib/constants/tipos-venta'
@@ -61,8 +62,6 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Label } from '@/components/ui/label'
 import {
   Tooltip,
   TooltipContent,
@@ -78,12 +77,13 @@ import { Usuario } from '@/types'
 
 // Schema de validación con regex actualizado
 const ventaSchema = z.object({
-  // Fecha y hora
-  opcion_fecha: z.enum(['HOY', 'AYER', 'OTRA']),
-  fecha: z.string(),
-  rango_horario: z.string().length(2),
+  // Vínculo obligatorio al arribo: la fecha y la tienda se heredan de él.
+  arribo_id: z.string().uuid('Debes seleccionar un arribo'),
+
+  // Rezago: el servidor los exige si la venta es de fecha anterior y el rol no
+  // tiene "fecha libre". El form los muestra/valida solo en ese caso.
+  rango_horario: z.string().optional(),
   motivo_rezago: z.string().optional(),
-  asesor_real_id: z.string().optional(),
 
   // Orden - actualizado para aceptar 7 u 8
   orden_venta: z.string().regex(/^[78]\d{8}$/, ORDEN_VENTA_MESSAGE),
@@ -176,6 +176,23 @@ const CATEGORIAS_NOMBRES: Record<string, string> = {
   OTROS: 'Otros',
 }
 
+// Arribo vinculado a la venta (Camino A: GET /api/arribos/[id]; Camino B: tabla).
+interface ArriboLink {
+  id: string
+  tienda_id: string
+  fecha: string
+  hora?: string
+  tipo_visita?: string
+  resultado?: string | null
+  tipo_documento_cliente: string | null
+  dni_cliente: string | null
+  nombre_cliente: string | null
+  es_cliente_entel?: boolean | null
+}
+
+// Tipos de documento válidos en ventas (sin OTRO). Para "elevación" 7.1.
+const TIPOS_DOC_VENTA = ['DNI', 'CE', 'RUC', 'PASAPORTE', 'PTP']
+
 export default function NuevaVentaPage() {
   const router = useRouter()
   const [user, setUser] = useState<Usuario | null>(null)
@@ -191,20 +208,34 @@ export default function NuevaVentaPage() {
   const [categorias, setCategorias] = useState<string[]>([])
   const [loadingTipos, setLoadingTipos] = useState(true)
 
+  // Estados para consulta DNI (json.pe)
+  const [consultandoDocumento, setConsultandoDocumento] = useState(false)
+  const [documentoError, setDocumentoError] = useState<string | null>(null)
+  const lastDocQueryRef = useRef<string>('')
+
+  // Vínculo al arribo (Camino A por query param, o Camino B desde la tabla).
+  const searchParams = useSearchParams()
+  const arriboIdQuery = searchParams.get('arribo_id')
+  const [arribo, setArribo] = useState<ArriboLink | null>(null)
+  const [mostrandoTabla, setMostrandoTabla] = useState(!arriboIdQuery)
+  const [cargandoArribo, setCargandoArribo] = useState(!!arriboIdQuery)
+  const [fechaTabla, setFechaTabla] = useState<string>(getFechaHoy())
+
   const hoy = getFechaHoy()
-  const ayer = getFechaAyer()
 
   const puedeRegistrarFechaLibre = user?.rol && ROLES_FECHA_LIBRE.includes(user.rol as typeof ROLES_FECHA_LIBRE[number])
   const requiereTienda = user?.rol && !ROLES_SIN_TIENDA.includes(user.rol as typeof ROLES_SIN_TIENDA[number])
 
+  // Rezago: derivado de la fecha del arribo (no del cliente).
+  const esRezagada = !!arribo && arribo.fecha !== hoy
+  const requiereAutorizacion = esRezagada && !puedeRegistrarFechaLibre
+
   const form = useForm<VentaFormValues>({
     resolver: zodResolver(ventaSchema),
     defaultValues: {
-      opcion_fecha: 'HOY',
-      fecha: hoy,
+      arribo_id: '',
       rango_horario: getRangoHorarioActual(),
       motivo_rezago: '',
-      asesor_real_id: '',
       orden_venta: '',
       telefono_linea: '',
       tipo_documento: 'DNI',
@@ -223,9 +254,9 @@ export default function NuevaVentaPage() {
     },
   })
 
-  const opcionFecha = form.watch('opcion_fecha')
   const tipoVenta = form.watch('tipo_venta')
   const tipoDocumento = form.watch('tipo_documento')
+  const numeroDocumento = form.watch('numero_documento')
   const incluyeAccesorios = form.watch('incluye_accesorios')
   const confirmarInar = form.watch('confirmar_inar')
 
@@ -252,6 +283,64 @@ export default function NuevaVentaPage() {
     }
     setTiendaActivaState(tienda)
   }, [router, requiereTienda])
+
+  // Vincular un arribo y pre-llenar (hacia adelante, editable).
+  const vincularArribo = useCallback(
+    (a: ArriboLink) => {
+      setArribo(a)
+      setMostrandoTabla(false)
+      form.setValue('arribo_id', a.id)
+
+      // "Elevación" 7.1: si el doc del arribo es OTRO/nulo o no es de los 5
+      // tipos válidos en ventas, dejar vacío para exigir uno válido.
+      const tipoValido =
+        !!a.tipo_documento_cliente && TIPOS_DOC_VENTA.includes(a.tipo_documento_cliente)
+      form.setValue(
+        'tipo_documento',
+        (tipoValido ? a.tipo_documento_cliente : 'DNI') as VentaFormValues['tipo_documento']
+      )
+      form.setValue('numero_documento', tipoValido ? a.dni_cliente ?? '' : '')
+      form.setValue('nombre_cliente', a.nombre_cliente ?? '')
+    },
+    [form]
+  )
+
+  // Camino A: releer el arribo por id (la página es nueva y pierde el estado).
+  useEffect(() => {
+    if (!arriboIdQuery || !user) return
+    let cancelado = false
+    ;(async () => {
+      setCargandoArribo(true)
+      try {
+        const res = await fetch(
+          `/api/arribos/${arriboIdQuery}?usuario_id=${user.id}`
+        )
+        const json = await res.json()
+        if (cancelado) return
+        if (!res.ok) {
+          toast.error(json.error ?? 'No se pudo cargar el arribo')
+          setMostrandoTabla(true)
+          return
+        }
+        if (json.arribo.tipo_visita === 'POSVENTA') {
+          toast.error('No se puede registrar una venta sobre un arribo de posventa')
+          setMostrandoTabla(true)
+          return
+        }
+        vincularArribo(json.arribo)
+      } catch {
+        if (!cancelado) {
+          toast.error('Error de conexión al cargar el arribo')
+          setMostrandoTabla(true)
+        }
+      } finally {
+        if (!cancelado) setCargandoArribo(false)
+      }
+    })()
+    return () => {
+      cancelado = true
+    }
+  }, [arriboIdQuery, user, vincularArribo])
 
   // Cargar tipos de venta desde la BD
   useEffect(() => {
@@ -290,16 +379,50 @@ export default function NuevaVentaPage() {
     loadOperadores()
   }, [])
 
-  // Actualizar fecha cuando cambia opción
-  useEffect(() => {
-    if (opcionFecha === 'HOY') {
-      form.setValue('fecha', hoy)
-      form.setValue('rango_horario', getRangoHorarioActual())
-      form.setValue('motivo_rezago', '')
-    } else if (opcionFecha === 'AYER') {
-      form.setValue('fecha', ayer)
+  // Consultar DNI en json.pe
+  const consultarDocumento = useCallback(async (numero: string) => {
+    if (!/^\d{8}$/.test(numero)) return
+
+    const queryKey = `DNI-${numero}`
+    if (queryKey === lastDocQueryRef.current) return
+
+    lastDocQueryRef.current = queryKey
+    setConsultandoDocumento(true)
+    setDocumentoError(null)
+
+    try {
+      const response = await fetch(`/api/consulta-documento?tipo=DNI&numero=${numero}`)
+      const data = await response.json()
+
+      if (data.success && data.data) {
+        const { apellido_paterno, apellido_materno, nombres } = data.data
+        const nombreCompleto = `${apellido_paterno} ${apellido_materno}, ${nombres}`
+        form.setValue('nombre_cliente', nombreCompleto)
+        setDocumentoError(null)
+      } else {
+        setDocumentoError(data.message || 'DNI no encontrado')
+      }
+    } catch {
+      setDocumentoError('Error de conexión')
+    } finally {
+      setConsultandoDocumento(false)
     }
-  }, [opcionFecha, form, hoy, ayer])
+  }, [form])
+
+  // Auto-consultar cuando se completan 8 dígitos de DNI
+  useEffect(() => {
+    if (esLineaAdicional) return
+    if (tipoDocumento !== 'DNI' || !numeroDocumento) return
+    if (numeroDocumento.length === 8 && /^\d{8}$/.test(numeroDocumento)) {
+      consultarDocumento(numeroDocumento)
+    }
+  }, [tipoDocumento, numeroDocumento, consultarDocumento, esLineaAdicional])
+
+  // Resetear consulta cuando cambia tipo de documento
+  useEffect(() => {
+    setDocumentoError(null)
+    lastDocQueryRef.current = ''
+  }, [tipoDocumento])
 
   // Verificar orden de venta
   const verificarOrden = useCallback(async (orden: string) => {
@@ -329,7 +452,7 @@ export default function NuevaVentaPage() {
 
     setVerificandoOrden(true)
     try {
-      const fecha = form.getValues('fecha')
+      const fecha = arribo?.fecha ?? hoy
       console.log('Verificando orden:', ordenLimpia, 'fecha:', fecha)
 
       const response = await fetch(`/api/ventas/verificar-orden?orden=${ordenLimpia}&fecha=${fecha}`)
@@ -352,7 +475,7 @@ export default function NuevaVentaPage() {
     } finally {
       setVerificandoOrden(false)
     }
-  }, [form])
+  }, [form, arribo, hoy])
 
   // Agregar línea adicional a orden existente
   const agregarLineaAdicional = () => {
@@ -375,6 +498,13 @@ export default function NuevaVentaPage() {
   async function onSubmit(values: VentaFormValues) {
     if (!user) return
 
+    // Debe haber un arribo vinculado (Camino A o B).
+    if (!arribo || !values.arribo_id) {
+      toast.error('Selecciona el arribo al que pertenece esta venta')
+      setMostrandoTabla(true)
+      return
+    }
+
     // Validar documento según tipo
     if (!validarDocumento(values.tipo_documento, values.numero_documento)) {
       const tipoDoc = TIPOS_DOCUMENTO.find((t) => t.codigo === values.tipo_documento)
@@ -396,10 +526,17 @@ export default function NuevaVentaPage() {
       return
     }
 
-    // Validar motivo rezago si no es hoy
-    if (values.opcion_fecha !== 'HOY' && !values.motivo_rezago) {
-      form.setError('motivo_rezago', { message: 'Indica el motivo del registro tardío' })
-      return
+    // Venta rezagada sin fecha libre: exigir motivo y rango horario (el server
+    // también los exige; aquí se evita el 400).
+    if (requiereAutorizacion) {
+      if (!values.motivo_rezago?.trim()) {
+        form.setError('motivo_rezago', { message: 'Indica el motivo del registro tardío' })
+        return
+      }
+      if (!values.rango_horario) {
+        form.setError('rango_horario', { message: 'Selecciona el rango horario' })
+        return
+      }
     }
 
     // Validar confirmación si existe en INAR
@@ -413,23 +550,16 @@ export default function NuevaVentaPage() {
 
     try {
       const tipoConfig = tiposVenta.find((t) => t.codigo === values.tipo_venta)
-      const esRezagada = values.opcion_fecha !== 'HOY'
 
+      // El servidor deriva fecha/tienda del arribo, el estado de rezago y el
+      // vendedor. Solo enviamos la identidad del usuario actual y arribo_id.
       const ventaData = {
-        // Automáticos
-        tienda_id: tiendaActiva?.id || null,
-        usuario_id: values.asesor_real_id || user.id,
-        codigo_asesor: user.codigo_asesor,
-        registrado_por: user.id,
+        arribo_id: values.arribo_id,
+        usuario_id: user.id,
 
-        // Fecha y hora
-        fecha: values.fecha,
-        rango_horario: values.rango_horario,
-        es_venta_rezagada: esRezagada,
-        motivo_rezago: esRezagada ? values.motivo_rezago : null,
-
-        // Estado
-        estado: esRezagada && !puedeRegistrarFechaLibre ? 'pendiente_aprobacion' : 'registrada',
+        // Rezago (el server decide la obligatoriedad real y el estado)
+        rango_horario: values.rango_horario || null,
+        motivo_rezago: values.motivo_rezago || null,
 
         // Identificación
         orden_venta: values.orden_venta,
@@ -448,19 +578,13 @@ export default function NuevaVentaPage() {
         modelo_equipo: values.modelo_equipo || null,
         iccid_chip: values.iccid_chip || null,
 
-        // Seguro
+        // Seguro y accesorios
         incluye_seguro: values.incluye_seguro || false,
-
-        // Accesorios
         incluye_accesorios: values.incluye_accesorios || false,
         descripcion_accesorios: values.incluye_accesorios ? values.descripcion_accesorios : null,
 
-        // Monto (se calcula después en el cruce con INAR)
-        monto_liquidado: 0,
-
         // Otros
         notas: values.notas || null,
-        estado_cruce: 'PENDIENTE',
       }
 
       const response = await fetch('/api/ventas', {
@@ -472,19 +596,25 @@ export default function NuevaVentaPage() {
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Error al registrar venta')
+        // Catálogo de errores del backend §3.
+        const mensajes: Record<number, string> = {
+          400: data.error || 'Datos inválidos',
+          403: 'No tienes acceso a la tienda del arribo',
+          404: 'El arribo ya no existe',
+          409: 'La orden de venta ya existe',
+          422: 'No se puede registrar venta sobre un arribo de posventa',
+        }
+        throw new Error(mensajes[response.status] || data.error || 'Error al registrar venta')
       }
 
+      toast.success('Venta registrada exitosamente')
       setIsSuccess(true)
-      form.reset()
       setOrdenVerificada(null)
       setEsLineaAdicional(false)
-
-      // Ocultar mensaje de éxito después de 5 segundos
-      setTimeout(() => setIsSuccess(false), 5000)
+      router.push('/dashboard/ventas')
     } catch (error) {
       console.error('Error:', error)
-      alert('Error al registrar venta: ' + (error as Error).message)
+      toast.error('Error al registrar venta: ' + (error as Error).message)
     } finally {
       setIsLoading(false)
     }
@@ -509,13 +639,20 @@ export default function NuevaVentaPage() {
               Registro declarativo de ventas (Boca de Urna)
             </p>
           </div>
-          {tiendaActiva && (
-            <Badge variant="outline" className="flex items-center gap-2 px-3 py-2 text-base">
-              <MapPin className="h-4 w-4" />
-              <span>{tiendaActiva.nombre}</span>
-              <span className="text-muted-foreground">({tiendaActiva.zona})</span>
+          <div className="flex flex-col items-end gap-2">
+            {/* Vendedor: se atribuye a la sesión activa (anti-error de asignación) */}
+            <Badge className="flex items-center gap-2 bg-primary px-3 py-2 text-base text-primary-foreground">
+              <User className="h-4 w-4" />
+              <span>Vendedor: {user.nombre_completo}</span>
             </Badge>
-          )}
+            {tiendaActiva && (
+              <Badge variant="outline" className="flex items-center gap-2 px-3 py-2 text-base">
+                <MapPin className="h-4 w-4" />
+                <span>{tiendaActiva.nombre}</span>
+                <span className="text-muted-foreground">({tiendaActiva.zona})</span>
+              </Badge>
+            )}
+          </div>
         </div>
 
         {/* Mensaje de éxito */}
@@ -538,141 +675,161 @@ export default function NuevaVentaPage() {
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            {/* SECCIÓN 1: FECHA Y HORA */}
+            {/* SECCIÓN 1: ARRIBO VINCULADO */}
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-lg">
-                  <Calendar className="h-5 w-5" />
-                  Fecha y Hora de la Venta
+                  <Link2 className="h-5 w-5" />
+                  Arribo vinculado
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="opcion_fecha"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormControl>
-                        <RadioGroup
-                          onValueChange={field.onChange}
-                          defaultValue={field.value}
-                          className="flex flex-wrap gap-4"
-                        >
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="HOY" id="hoy" />
-                            <Label htmlFor="hoy" className="cursor-pointer">
-                              Venta de HOY ({hoy})
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="AYER" id="ayer" />
-                            <Label htmlFor="ayer" className="cursor-pointer">
-                              Venta de AYER ({ayer})
-                            </Label>
-                          </div>
-                          {puedeRegistrarFechaLibre && (
-                            <div className="flex items-center space-x-2">
-                              <RadioGroupItem value="OTRA" id="otra" />
-                              <Label htmlFor="otra" className="cursor-pointer">
-                                Otra fecha
-                              </Label>
-                            </div>
-                          )}
-                        </RadioGroup>
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  {opcionFecha === 'OTRA' && (
-                    <FormField
-                      control={form.control}
-                      name="fecha"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Fecha *</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="date"
-                              max={ayer}
-                              {...field}
-                              disabled={isLoading}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
-
-                  {opcionFecha !== 'HOY' && (
-                    <FormField
-                      control={form.control}
-                      name="rango_horario"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Rango Horario *</FormLabel>
-                          <Select
-                            onValueChange={field.onChange}
-                            value={field.value}
-                            disabled={isLoading}
-                          >
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Selecciona hora" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {RANGOS_HORARIOS.map((rango) => (
-                                <SelectItem key={rango.codigo} value={rango.codigo}>
-                                  {rango.nombre}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
-                </div>
-
-                {opcionFecha !== 'HOY' && (
+                {cargandoArribo ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Cargando arribo...
+                  </div>
+                ) : arribo ? (
                   <>
-                    <Alert variant="destructive" className="bg-amber-50 border-amber-200">
-                      <AlertTriangle className="h-4 w-4 text-amber-600" />
-                      <AlertTitle className="text-amber-800">Venta Rezagada</AlertTitle>
-                      <AlertDescription className="text-amber-700">
-                        {puedeRegistrarFechaLibre
-                          ? 'Registrando venta de fecha anterior.'
-                          : 'Esta venta requiere aprobación y genera una incidencia.'}
-                      </AlertDescription>
-                    </Alert>
+                    {/* Banner del arribo vinculado */}
+                    <div className="flex items-center justify-between rounded-lg border bg-slate-50 p-3 text-sm">
+                      <span>
+                        Venta vinculada al arribo de{' '}
+                        <b>
+                          {arribo.nombre_cliente ??
+                            arribo.dni_cliente ??
+                            'cliente sin documento'}
+                        </b>
+                        {arribo.hora ? ` · ${arribo.hora.slice(0, 5)}` : ''} · {arribo.fecha}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setArribo(null)
+                          setMostrandoTabla(true)
+                          form.setValue('arribo_id', '')
+                        }}
+                        className="text-xs text-slate-500 underline"
+                      >
+                        Cambiar arribo
+                      </button>
+                    </div>
 
-                    <FormField
-                      control={form.control}
-                      name="motivo_rezago"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Motivo del registro tardío *</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              placeholder="Explica por qué no se registró en su momento..."
-                              className="resize-none"
-                              rows={2}
-                              {...field}
-                              disabled={isLoading}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    {/* Aviso de venta rezagada (la fecha viene del arribo) */}
+                    {esRezagada && (
+                      <Alert variant="destructive" className="bg-amber-50 border-amber-200">
+                        <AlertTriangle className="h-4 w-4 text-amber-600" />
+                        <AlertTitle className="text-amber-800">
+                          Venta de fecha anterior
+                        </AlertTitle>
+                        <AlertDescription className="text-amber-700">
+                          Esta venta es de una fecha anterior ({arribo.fecha}).{' '}
+                          {requiereAutorizacion
+                            ? 'Quedará pendiente de aprobación.'
+                            : 'Registrando con fecha libre.'}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {requiereAutorizacion && (
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <FormField
+                          control={form.control}
+                          name="rango_horario"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Rango Horario *</FormLabel>
+                              <Select
+                                onValueChange={field.onChange}
+                                value={field.value}
+                                disabled={isLoading}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Selecciona hora" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {RANGOS_HORARIOS.map((rango) => (
+                                    <SelectItem key={rango.codigo} value={rango.codigo}>
+                                      {rango.nombre}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="motivo_rezago"
+                          render={({ field }) => (
+                            <FormItem className="md:col-span-2">
+                              <FormLabel>Motivo del registro tardío *</FormLabel>
+                              <FormControl>
+                                <Textarea
+                                  placeholder="Explica por qué no se registró en su momento..."
+                                  className="resize-none"
+                                  rows={2}
+                                  {...field}
+                                  disabled={isLoading}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
                   </>
-                )}
+                ) : mostrandoTabla ? (
+                  tiendaActiva ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <FormLabel className="whitespace-nowrap">Arribos del día</FormLabel>
+                        <Input
+                          type="date"
+                          value={fechaTabla}
+                          max={hoy}
+                          onChange={(e) => setFechaTabla(e.target.value)}
+                          className="w-auto"
+                          disabled={isLoading}
+                        />
+                      </div>
+                      <TablaArribosVendibles
+                        tiendaId={tiendaActiva.id}
+                        fecha={fechaTabla}
+                        usuarioId={user.id}
+                        onSelect={(a) =>
+                          vincularArribo({
+                            // tienda_id y fecha provienen del contexto de la tabla.
+                            id: a.id,
+                            tienda_id: tiendaActiva.id,
+                            fecha: fechaTabla,
+                            hora: a.hora,
+                            tipo_visita: a.tipo_visita,
+                            resultado: a.resultado,
+                            tipo_documento_cliente: a.tipo_documento_cliente,
+                            dni_cliente: a.dni_cliente,
+                            nombre_cliente: a.nombre_cliente,
+                            es_cliente_entel: a.es_cliente_entel,
+                          })
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500">
+                      Selecciona una tienda para ver sus arribos.
+                    </p>
+                  )
+                ) : null}
               </CardContent>
             </Card>
+
+            {/* El resto del formulario solo aplica con un arribo vinculado */}
+            {arribo && (
+              <>
 
             {/* SECCIÓN 2: ORDEN DE VENTA */}
             <Card>
@@ -955,13 +1112,21 @@ export default function NuevaVentaPage() {
                     render={({ field }) => (
                       <FormItem className="md:col-span-2">
                         <FormLabel>Nombre del Cliente *</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder="Como aparece en el documento"
-                            {...field}
-                            disabled={isLoading || esLineaAdicional}
-                          />
-                        </FormControl>
+                        <div className="relative">
+                          <FormControl>
+                            <Input
+                              placeholder="Como aparece en el documento"
+                              {...field}
+                              disabled={isLoading || esLineaAdicional || consultandoDocumento}
+                            />
+                          </FormControl>
+                          {consultandoDocumento && (
+                            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+                          )}
+                        </div>
+                        {documentoError && tipoDocumento === 'DNI' && (
+                          <p className="text-sm text-amber-600">{documentoError} - ingresa el nombre manualmente</p>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -1283,6 +1448,8 @@ export default function NuevaVentaPage() {
                 Limpiar Formulario
               </Button>
             </div>
+              </>
+            )}
           </form>
         </Form>
       </div>

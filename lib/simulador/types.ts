@@ -10,7 +10,40 @@ import type {
   CommissionItemType,
   PartitionPreset,
   TipoVenta,
+  // v2.0 imports
+  ContributionType,
+  RangeSource,
+  OvercomplianceMode,
+  MeasurementType,
+  FulfillmentMethod,
+  VariableSource,
+  MultiplierType,
+  ActivationCriteria,
+  CommissionItemMultiplier,
+  TieredRange,
+  MeasurementConfig,
+  AcceleratorRanges,
+  AcceleratorBase,
+  ConversionTable,
 } from '@/lib/comisiones/types'
+
+// Re-export v2.0 types for convenience
+export type {
+  ContributionType,
+  RangeSource,
+  OvercomplianceMode,
+  MeasurementType,
+  FulfillmentMethod,
+  VariableSource,
+  MultiplierType,
+  ActivationCriteria,
+  CommissionItemMultiplier,
+  TieredRange,
+  MeasurementConfig,
+  AcceleratorRanges,
+  AcceleratorBase,
+  ConversionTable,
+}
 
 // ============================================================================
 // TIPOS DE CUOTAS HC (v1.2 NUEVO)
@@ -275,6 +308,10 @@ export interface ScenarioDifference {
 /**
  * Partida con toda la información de mapeo
  * Usado en queries y componentes
+ *
+ * NOTA IMPORTANTE: Los campos `category` y `calculation_type` NO existen
+ * en la tabla commission_scheme_items. Se derivan de los JOINs con
+ * partition_presets o commission_item_types.
  */
 export interface SchemeItemWithMapping {
   id: string
@@ -283,9 +320,10 @@ export interface SchemeItemWithMapping {
   preset_id: string | null
   custom_name: string | null
   custom_description: string | null
+  original_label?: string | null  // v2.1: Etiqueta original del Excel
   quota: number | null
   quota_amount: number | null
-  weight: number | null
+  weight: number | null           // Campo real de la BD (NO es weight_percent)
   mix_factor: number | null
   variable_amount: number
   min_fulfillment: number | null
@@ -295,14 +333,21 @@ export interface SchemeItemWithMapping {
   is_active: boolean
   display_order: number
   notes: string | null
+
+  // Campos DERIVADOS de JOINs (NO existen en la tabla)
+  category?: ItemCategory           // Viene de preset.default_category o item_type.category
+  calculation_type?: CalculationType // Viene de preset.default_calculation_type o item_type.calculation_type
+
   // Datos joinados
   item_type?: {
+    id?: string
     code: string
     name: string
     category: ItemCategory
     calculation_type: CalculationType
   } | null
   preset?: {
+    id?: string
     code: string
     name: string
     short_name: string | null
@@ -501,4 +546,165 @@ export function getProgressBarColor(fulfillment: number): string {
   if (fulfillment < 0.8) return PROGRESS_BAR_COLORS.warning
   if (fulfillment < 1) return PROGRESS_BAR_COLORS.good
   return PROGRESS_BAR_COLORS.excellent
+}
+
+// ============================================================================
+// TIPOS V2.0 - SIMULADOR CON COMISIONES v3.4
+// ============================================================================
+
+/**
+ * Resultado de evaluar un multiplicador
+ */
+export interface MultiplierEvaluation {
+  multiplier: CommissionItemMultiplier
+  conditionMet: boolean
+  appliedFactor: number
+  currentValue: number
+  requiredValue: number | null
+  description: string
+}
+
+/**
+ * Resultado de sobrecumplimiento de una partida
+ */
+export interface OvercomplianceResult {
+  mode: OvercomplianceMode
+  baseCommission: number
+  bonusCommission: number
+  bonusUnits: number
+  cappedUnits: number | null
+  cappedAmount: number | null
+  totalCommission: number
+}
+
+/**
+ * Detalle de partida v2.0 (con multiplicadores y sobrecumplimiento)
+ */
+export interface ItemDetailV2 {
+  // Identificación
+  id: string
+  name: string
+  itemTypeCode: string | null
+  presetCode: string | null
+  customName: string | null
+  category: ItemCategory
+
+  // Tipos de cálculo (v2.0)
+  calculationType: CalculationType
+  contributionType: ContributionType
+  measurementType: MeasurementType
+  variableSource: VariableSource
+
+  // Cuotas
+  quota: number | null
+  effectiveQuota: number | null
+  weight: number | null
+  variableAmount: number
+
+  // Ventas y cumplimiento
+  sales: number
+  salesRaw: number
+  fulfillment: number
+  effectiveFulfillment: number
+  meetsMinimum: boolean
+  minFulfillment: number
+
+  // Multiplicadores (v2.0 - reemplaza locks)
+  multipliersEvaluated: MultiplierEvaluation[]
+  combinedMultiplierFactor: number
+  hasBlockingMultiplier: boolean
+
+  // Sobrecumplimiento (v2.0)
+  overcomplianceResult: OvercomplianceResult | null
+
+  // Restricciones (mantener compatibilidad)
+  restrictionApplied: boolean
+  restrictionDetail: string | null
+
+  // Comisión
+  baseCommission: number
+  adjustedCommission: number
+  bonusFromOvercompliance: number
+  commission: number
+
+  // Mapeo
+  tiposVentaMapeados: TipoVentaMapping[]
+}
+
+/**
+ * Resultado de simulación v2.0
+ */
+export interface SimulationResultV2 {
+  // Componentes de ingreso
+  fixedSalary: number
+  variableCommission: number
+  acceleratorAdjustment: number
+  pxqCommission: number
+  bonusCommission: number
+  additionalCommission: number
+  overcomplianceBonus: number
+
+  // Totales
+  totalGross: number
+  predictedPenalties: number
+  totalNet: number
+
+  // Cumplimiento global
+  globalFulfillment: number
+  globalSSQuota: number
+  globalSSSales: number
+
+  // Detalles
+  details: ItemDetailV2[]
+
+  // Info cuota (v1.2)
+  quotaInfo?: QuotaInfo
+
+  // Metadata (v2.0)
+  calculationMetadata: {
+    schemeType: 'asesor' | 'supervisor' | 'encargado'
+    acceleratorBase: AcceleratorBase
+    totalMultiplierFactors: number
+    hasConversionTable: boolean
+    calculationSteps: string[]
+  }
+}
+
+/**
+ * Partida con campos v3.4 para simulación
+ */
+export interface SchemeItemV2 extends SchemeItemWithMapping {
+  // v3.2
+  contribution_type: ContributionType
+  range_source: RangeSource
+  uses_conversion_table: boolean
+  accelerator_ranges: AcceleratorRanges | null
+
+  // v3.3
+  measurement_type: MeasurementType
+  fulfillment_method: FulfillmentMethod
+  measurement_config: MeasurementConfig | null
+
+  // v3.0.1 Sobrecumplimiento
+  overcompliance_mode: OvercomplianceMode
+  cap_units: number | null
+  pxq_bonus_amount: number | null
+  overcap_max_units: number | null
+  overcap_max_amount: number | null
+
+  // v3.4
+  variable_source: VariableSource
+
+  // Multiplicadores (reemplaza locks)
+  multipliers: CommissionItemMultiplier[]
+}
+
+/**
+ * Esquema para simulación v2.0
+ */
+export interface SchemeForSimulationV2 extends Omit<SchemeForSimulation, 'items'> {
+  accelerator_base: AcceleratorBase
+  conversion_table: ConversionTable | null
+  global_range_method: 'VOLUMEN_TOTAL' | null
+  items: SchemeItemV2[]
 }

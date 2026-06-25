@@ -17,7 +17,7 @@ export type CalculationType = 'percentage' | 'pxq' | 'binary' | 'fixed'
 // Grupo de preset (para UI)
 export type PresetGroup = 'agrupacion' | 'individual'
 
-// Tipo de candado (condición para comisionar)
+// Tipo de candado (condición para comisionar) — legacy
 export type LockType = 'min_quantity' | 'min_amount' | 'min_percentage' | 'min_fulfillment'
 
 // Tipo de restricción
@@ -25,6 +25,82 @@ export type RestrictionType = 'max_percentage' | 'max_quantity' | 'min_percentag
 
 // Origen del esquema
 export type SchemeSource = 'entel' | 'socio'
+
+// v3.2: Tipo de contribución de partida
+export type ContributionType = 'PONDERADA' | 'ACELERADOR' | 'PXQ_INDEPENDIENTE' | 'BONO'
+
+// v3.2: Fuente de rango
+export type RangeSource = 'CUOTA_PROPIA' | 'VOLUMEN_GLOBAL' | 'CUOTA_GLOBAL_SS'
+
+// v3.0.1: Modo de sobrecumplimiento
+export type OvercomplianceMode = 'none' | 'proportional' | 'pxq_bonus'
+
+// v3.3: Tipo de medición
+export type MeasurementType = 'UNIT_COUNT' | 'AVERAGE_VALUE' | 'TOTAL_VALUE' | 'RATE' | 'MANUAL'
+
+// v3.3: Método de cumplimiento
+export type FulfillmentMethod = 'RATIO' | 'ABSOLUTE_RANGES'
+
+// v3.2: Tipo de multiplicador
+export type MultiplierType = 'LOCK' | 'ACCELERATOR' | 'DECELERATOR' | 'PROPORTIONAL' | 'CROSS_PRODUCT' | 'TIERED'
+
+// v3.2: Criterio de activación de multiplicador
+export type ActivationCriteria = 'MIN_QUANTITY' | 'OWN_ATTAINMENT' | 'OTHER_ATTAINMENT' | 'GLOBAL_ATTAINMENT' | 'ATTAINMENT_RANGE' | 'OPERATOR_ORIGIN'
+
+// v3.3: Tipo de medición para multiplicadores (subconjunto)
+export type MultiplierMeasurementType = 'UNIT_COUNT' | 'RATE' | 'AVERAGE_VALUE' | 'MANUAL'
+
+// v3.2: Método de rango global
+export type GlobalRangeMethod = 'VOLUMEN_TOTAL' | null
+
+// v3.3: Base de aceleradores
+export type AcceleratorBase = 'VARIABLE_TEORICO' | 'VARIABLE_CALCULADO'
+
+// v3.4: Fuente del monto variable (para partidas Adicional)
+export type VariableSource = 'FROM_MIX' | 'FIXED_EXTRA'
+
+// ============================================================================
+// INTERFACES v3.2/v3.3
+// ============================================================================
+
+export interface ConversionTableRange {
+  min: number
+  max: number
+  effective: number | string // number o "+10" para sin tope
+  label?: string
+}
+
+export interface ConversionTable {
+  description?: string
+  ranges: ConversionTableRange[]
+}
+
+export interface AcceleratorRange {
+  min: number
+  max: number
+  pct_effect: number
+  label?: string
+}
+
+export interface AcceleratorRanges {
+  source_item_name?: string
+  ranges: AcceleratorRange[]
+}
+
+export interface MeasurementConfig {
+  value_field?: string
+  condition_field?: string
+  condition_value?: boolean | string | number
+  scope_tipos_venta?: string[]
+  description?: string
+}
+
+export interface TieredRange {
+  min: number
+  max: number
+  factor: number
+  label?: string
+}
 
 // ============================================================================
 // INTERFACES PRINCIPALES
@@ -52,6 +128,11 @@ export interface CommissionScheme {
   source_file_name?: string | null
   source_file_url?: string | null
   ai_interpretation_log?: Record<string, unknown> | null
+  // v3.2
+  conversion_table?: ConversionTable | null
+  global_range_method?: GlobalRangeMethod
+  // v3.3
+  accelerator_base?: AcceleratorBase
   approved_by?: string | null
   approved_at?: string | null
   approval_notes?: string | null
@@ -160,12 +241,12 @@ export interface CommissionItemVenta {
 export interface CommissionSchemeItem {
   id: string
   scheme_id: string
-  item_type_id?: string | null // Ahora opcional (puede ser null si es partida custom)
+  item_type_id?: string | null
   item_type?: CommissionItemType // joined
-  preset_id?: string | null // Referencia al preset usado
+  preset_id?: string | null
   preset?: PartitionPreset // joined
-  custom_name?: string | null // Nombre personalizado para la partida
-  custom_description?: string | null // Descripción personalizada
+  custom_name?: string | null
+  custom_description?: string | null
   original_label?: string | null
   quota?: number | null
   quota_amount?: number | null
@@ -176,6 +257,23 @@ export interface CommissionSchemeItem {
   has_cap: boolean
   cap_percentage?: number | null
   cap_amount?: number | null
+  // v3.2
+  contribution_type?: ContributionType
+  range_source?: RangeSource
+  uses_conversion_table?: boolean
+  accelerator_ranges?: AcceleratorRanges | null
+  // v3.3
+  measurement_type?: MeasurementType
+  fulfillment_method?: FulfillmentMethod
+  measurement_config?: MeasurementConfig | null
+  // v3.0.1: Sobrecumplimiento
+  overcompliance_mode?: OvercomplianceMode
+  cap_units?: number | null
+  pxq_bonus_amount?: number | null
+  overcap_max_units?: number | null
+  overcap_max_amount?: number | null
+  // v3.4: Fuente del variable para Adicionales
+  variable_source?: VariableSource
   is_active: boolean
   display_order: number
   notes?: string | null
@@ -184,12 +282,38 @@ export interface CommissionSchemeItem {
   source_cell_ref?: string | null
   created_at: string
   updated_at: string
-  // Populated from join with commission_item_ventas
+  // Populated from joins
   tipos_venta?: CommissionItemVenta[]
 }
 
 /**
- * Candado de una partida
+ * Multiplicador unificado (v3.2)
+ * Tabla: commission_item_multipliers
+ */
+export interface CommissionItemMultiplier {
+  id: string
+  item_id: string
+  multiplier_type: MultiplierType
+  activation_criteria: ActivationCriteria
+  source_description: string
+  source_item_id?: string | null
+  threshold_value?: number | null
+  factor_if_met: number
+  factor_if_not_met: number
+  tiered_ranges?: TieredRange[] | null
+  operator_cedente?: string | null
+  // v3.3
+  measurement_type?: MultiplierMeasurementType
+  measurement_config?: MeasurementConfig | null
+  is_active: boolean
+  display_order: number
+  notes?: string | null
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * Candado de una partida — legacy, usar CommissionItemMultiplier
  * Tabla: commission_item_locks
  */
 export interface CommissionItemLock {
@@ -279,20 +403,22 @@ export interface SchemeFormData {
   variable_salary: number
   total_ss_quota: number
   default_min_fulfillment: number
+  // v3.2
+  conversion_table?: ConversionTable | null
+  global_range_method?: GlobalRangeMethod
+  // v3.3
+  accelerator_base?: AcceleratorBase
 }
 
 /**
- * Datos del formulario de partida (v2.1 - con sistema de presets)
+ * Datos del formulario de partida (v3.3)
  */
 export interface SchemeItemFormData {
-  // Puede tener item_type_id O preset_id (o ambos para trazabilidad)
   item_type_id?: string | null
   preset_id?: string | null
   custom_name?: string | null
   custom_description?: string | null
-  // Tipos de venta seleccionados manualmente
   tipos_venta_ids?: TipoVentaSelection[]
-  // Configuración de la partida
   quota?: number | null
   weight?: number | null
   mix_factor?: number | null
@@ -301,6 +427,23 @@ export interface SchemeItemFormData {
   has_cap: boolean
   cap_percentage?: number | null
   cap_amount?: number | null
+  // v3.2
+  contribution_type: ContributionType
+  range_source: RangeSource
+  uses_conversion_table: boolean
+  accelerator_ranges?: AcceleratorRanges | null
+  // v3.3
+  measurement_type: MeasurementType
+  fulfillment_method: FulfillmentMethod
+  measurement_config?: MeasurementConfig | null
+  // v3.0.1: Sobrecumplimiento
+  overcompliance_mode: OvercomplianceMode
+  cap_units?: number | null
+  pxq_bonus_amount?: number | null
+  overcap_max_units?: number | null
+  overcap_max_amount?: number | null
+  // v3.4: Fuente del variable
+  variable_source: VariableSource
   is_active: boolean
 }
 
@@ -314,7 +457,25 @@ export interface TipoVentaSelection {
 }
 
 /**
- * Datos del formulario de candado
+ * Datos del formulario de multiplicador (v3.2)
+ */
+export interface MultiplierFormData {
+  multiplier_type: MultiplierType
+  activation_criteria: ActivationCriteria
+  source_description: string
+  source_item_id?: string | null
+  threshold_value?: number | null
+  factor_if_met: number
+  factor_if_not_met: number
+  tiered_ranges?: TieredRange[] | null
+  operator_cedente?: string | null
+  measurement_type?: MultiplierMeasurementType
+  measurement_config?: MeasurementConfig | null
+  is_active: boolean
+}
+
+/**
+ * Datos del formulario de candado — legacy
  */
 export interface LockFormData {
   lock_type: LockType
@@ -390,6 +551,93 @@ export const ITEM_CATEGORY_LABELS: Record<ItemCategory, string> = {
   pxq: 'PxQ',
   postventa: 'Post Venta',
   bono: 'Bono',
+}
+
+export const CONTRIBUTION_TYPE_LABELS: Record<ContributionType, string> = {
+  PONDERADA: 'Ponderada',
+  ACELERADOR: 'Acelerador',
+  PXQ_INDEPENDIENTE: 'PxQ Independiente',
+  BONO: 'Bono',
+}
+
+export const CONTRIBUTION_TYPE_DESCRIPTIONS: Record<ContributionType, string> = {
+  PONDERADA: 'Peso % del variable',
+  ACELERADOR: 'Suma/resta % al total',
+  PXQ_INDEPENDIENTE: 'Monto aparte (precio x qty)',
+  BONO: 'Todo o nada',
+}
+
+export const RANGE_SOURCE_LABELS: Record<RangeSource, string> = {
+  CUOTA_PROPIA: 'Cuota propia (Real/Meta)',
+  VOLUMEN_GLOBAL: 'Volumen global (total absoluto)',
+  CUOTA_GLOBAL_SS: '% Cuota SS total',
+}
+
+export const OVERCOMPLIANCE_MODE_LABELS: Record<OvercomplianceMode, string> = {
+  none: 'Sin sobrecumplimiento',
+  proportional: 'Proporcional',
+  pxq_bonus: 'Bono por unidad adicional',
+}
+
+export const OVERCOMPLIANCE_MODE_DESCRIPTIONS: Record<OvercomplianceMode, string> = {
+  none: 'Se paga máximo el Variable S/. al alcanzar 100%.',
+  proportional: 'Cada unidad adicional se paga al mismo valor unitario.',
+  pxq_bonus: 'Monto fijo por cada unidad vendida sobre la meta.',
+}
+
+export const MULTIPLIER_TYPE_LABELS: Record<MultiplierType, string> = {
+  LOCK: 'Candado',
+  ACCELERATOR: 'Acelerador',
+  DECELERATOR: 'Desacelerador',
+  PROPORTIONAL: 'Proporcional',
+  CROSS_PRODUCT: 'Cruzado',
+  TIERED: 'Escalonado',
+}
+
+export const MULTIPLIER_TYPE_ICONS: Record<MultiplierType, string> = {
+  LOCK: '🔒',
+  ACCELERATOR: '📈',
+  DECELERATOR: '📉',
+  PROPORTIONAL: '📊',
+  CROSS_PRODUCT: '🔗',
+  TIERED: '📊',
+}
+
+export const ACTIVATION_CRITERIA_LABELS: Record<ActivationCriteria, string> = {
+  MIN_QUANTITY: 'Cantidad mínima de producto',
+  OWN_ATTAINMENT: '% cumplimiento propio',
+  OTHER_ATTAINMENT: '% cumplimiento de otra partida',
+  GLOBAL_ATTAINMENT: '% cumplimiento global SS',
+  ATTAINMENT_RANGE: 'Rango de cumplimiento',
+  OPERATOR_ORIGIN: '% origen operador',
+}
+
+export const MEASUREMENT_TYPE_LABELS: Record<MeasurementType, string> = {
+  UNIT_COUNT: 'Conteo de unidades',
+  AVERAGE_VALUE: 'Valor promedio',
+  TOTAL_VALUE: 'Valor total',
+  RATE: 'Tasa / Ratio',
+  MANUAL: 'Valor manual',
+}
+
+export const FULFILLMENT_METHOD_LABELS: Record<FulfillmentMethod, string> = {
+  RATIO: 'Ratio (logro / meta)',
+  ABSOLUTE_RANGES: 'Rangos absolutos',
+}
+
+export const ACCELERATOR_BASE_LABELS: Record<'VARIABLE_TEORICO' | 'VARIABLE_CALCULADO', string> = {
+  VARIABLE_TEORICO: 'Variable teórico (fijo)',
+  VARIABLE_CALCULADO: 'Variable calculado (rendimiento)',
+}
+
+export const VARIABLE_SOURCE_LABELS: Record<VariableSource, string> = {
+  FROM_MIX: 'Parte del variable teórico',
+  FIXED_EXTRA: 'Monto adicional (extra)',
+}
+
+export const VARIABLE_SOURCE_DESCRIPTIONS: Record<VariableSource, string> = {
+  FROM_MIX: 'Contribuye al 100% del Mix',
+  FIXED_EXTRA: 'No cuenta en el Mix',
 }
 
 export const LOCK_TYPE_LABELS: Record<LockType, string> = {

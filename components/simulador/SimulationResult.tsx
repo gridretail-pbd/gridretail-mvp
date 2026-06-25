@@ -11,13 +11,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Download } from 'lucide-react'
-import type { SimulationResult as SimulationResultType } from '@/lib/simulador/types'
+import { Download, TrendingUp, TrendingDown } from 'lucide-react'
+import type { SimulationResult as SimulationResultType, SimulationResultV2 } from '@/lib/simulador/types'
 import { formatCurrency, formatPercentage } from '@/lib/simulador/formatters'
 import { getFulfillmentColor } from '@/lib/simulador/types'
 
+// Type guard para distinguir SimulationResultV2
+function isResultV2(result: SimulationResultType | SimulationResultV2): result is SimulationResultV2 {
+  return 'acceleratorAdjustment' in result || 'overcomplianceBonus' in result
+}
+
 interface SimulationResultProps {
-  result: SimulationResultType
+  result: SimulationResultType | SimulationResultV2
   schemeName?: string
   onExport?: () => void
   showExport?: boolean
@@ -33,7 +38,10 @@ export function SimulationResult({
   onExport,
   showExport = true,
 }: SimulationResultProps) {
-  const rows = [
+  const isV2 = isResultV2(result)
+
+  // Construir filas dinámicamente
+  const rows: { concept: string; amount: number; detail: string; highlight?: 'positive' | 'negative' }[] = [
     {
       concept: 'Sueldo Fijo',
       amount: result.fixedSalary,
@@ -44,22 +52,45 @@ export function SimulationResult({
       amount: result.variableCommission,
       detail: `${formatPercentage(result.globalFulfillment)} cumpl. global`,
     },
-    {
-      concept: 'Adicionales',
-      amount: result.additionalCommission,
-      detail: 'RENO + PACK + otros',
-    },
-    {
-      concept: 'PxQ',
-      amount: result.pxqCommission,
-      detail: 'Bonos por unidad',
-    },
-    {
-      concept: 'Bonos',
-      amount: result.bonusCommission,
-      detail: 'NPS, objetivos especiales',
-    },
   ]
+
+  // v2: Agregar ajuste de aceleradores si existe
+  if (isV2 && result.acceleratorAdjustment !== 0) {
+    rows.push({
+      concept: 'Ajuste Aceleradores',
+      amount: result.acceleratorAdjustment,
+      detail: result.acceleratorAdjustment > 0 ? 'Bonus por desempeño' : 'Ajuste por bajo desempeño',
+      highlight: result.acceleratorAdjustment > 0 ? 'positive' : 'negative',
+    })
+  }
+
+  rows.push({
+    concept: 'Adicionales',
+    amount: result.additionalCommission,
+    detail: 'RENO + PACK + otros',
+  })
+
+  rows.push({
+    concept: 'PxQ',
+    amount: result.pxqCommission,
+    detail: 'Bonos por unidad',
+  })
+
+  rows.push({
+    concept: 'Bonos',
+    amount: result.bonusCommission,
+    detail: 'NPS, objetivos especiales',
+  })
+
+  // v2: Agregar sobrecumplimiento si existe
+  if (isV2 && result.overcomplianceBonus > 0) {
+    rows.push({
+      concept: 'Bono Sobrecumplimiento',
+      amount: result.overcomplianceBonus,
+      detail: 'Ventas sobre meta',
+      highlight: 'positive',
+    })
+  }
 
   const hasPenalties = result.predictedPenalties !== 0
 
@@ -114,9 +145,37 @@ export function SimulationResult({
             </TableHeader>
             <TableBody>
               {rows.map((row) => (
-                <TableRow key={row.concept}>
-                  <TableCell className="font-medium">{row.concept}</TableCell>
-                  <TableCell className="text-right tabular-nums">
+                <TableRow
+                  key={row.concept}
+                  className={
+                    row.highlight === 'positive'
+                      ? 'bg-emerald-50/50'
+                      : row.highlight === 'negative'
+                      ? 'bg-red-50/50'
+                      : ''
+                  }
+                >
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-2">
+                      {row.highlight === 'positive' && (
+                        <TrendingUp className="h-4 w-4 text-emerald-500" />
+                      )}
+                      {row.highlight === 'negative' && (
+                        <TrendingDown className="h-4 w-4 text-red-500" />
+                      )}
+                      {row.concept}
+                    </div>
+                  </TableCell>
+                  <TableCell
+                    className={`text-right tabular-nums ${
+                      row.highlight === 'positive'
+                        ? 'text-emerald-700 font-medium'
+                        : row.highlight === 'negative'
+                        ? 'text-red-700 font-medium'
+                        : ''
+                    }`}
+                  >
+                    {row.highlight === 'positive' && '+'}
                     {formatCurrency(row.amount)}
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
@@ -168,9 +227,11 @@ export function SimulationResultCompact({
   result,
   title,
 }: {
-  result: SimulationResultType
+  result: SimulationResultType | SimulationResultV2
   title?: string
 }) {
+  const isV2 = isResultV2(result)
+
   return (
     <div className="p-4 border rounded-lg space-y-3">
       {title && (
@@ -198,6 +259,16 @@ export function SimulationResultCompact({
             {formatCurrency(result.variableCommission)}
           </span>
         </div>
+        {/* v2: Aceleradores */}
+        {isV2 && result.acceleratorAdjustment !== 0 && (
+          <div className={`flex justify-between ${result.acceleratorAdjustment > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+            <span>Acelerador:</span>
+            <span className="tabular-nums">
+              {result.acceleratorAdjustment > 0 ? '+' : ''}
+              {formatCurrency(result.acceleratorAdjustment)}
+            </span>
+          </div>
+        )}
         <div className="flex justify-between">
           <span className="text-muted-foreground">Adicionales:</span>
           <span className="tabular-nums">
@@ -213,6 +284,15 @@ export function SimulationResultCompact({
             <span className="text-muted-foreground">Bonos:</span>
             <span className="tabular-nums">
               {formatCurrency(result.bonusCommission)}
+            </span>
+          </div>
+        )}
+        {/* v2: Sobrecumplimiento */}
+        {isV2 && result.overcomplianceBonus > 0 && (
+          <div className="flex justify-between text-emerald-600">
+            <span>Sobrecumpl.:</span>
+            <span className="tabular-nums">
+              +{formatCurrency(result.overcomplianceBonus)}
             </span>
           </div>
         )}

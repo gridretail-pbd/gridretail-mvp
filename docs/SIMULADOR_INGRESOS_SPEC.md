@@ -1,9 +1,10 @@
 # Simulador de Ingresos HC - Especificación Frontend
 ## GridRetail - Modelador de Comisiones HC
 
-**Versión:** 1.2  
-**Fecha:** 2026-01-27  
+**Versión:** 2.0  
+**Fecha:** 2026-02-03  
 **Para:** Claude Code - Desarrollo Frontend  
+**Alcance:** Esquemas TEX/PBD (WEIGHTED_SUM)
 
 ---
 
@@ -11,42 +12,52 @@
 
 | Versión | Fecha | Cambios |
 |---------|-------|---------|
-| **1.2** | **2026-01-27** | **Integración con Módulo de Cuotas v2.3**: uso de `get_hc_effective_quota()` para obtener metas, soporte de prorrateo, nuevo hook `useHCQuota()`, interface `HCQuota`, diagrama de integración de módulos |
-| 1.1 | 2026-01-25 | Actualizado para mapeo flexible de partidas (v2.1 BD): queries con `commission_item_ventas`, tipos con `TipoVentaMapping`, helpers para nombres efectivos |
+| **2.0** | **2026-02-03** | **Actualización mayor para Comisiones v3.4**: Motor de cálculo universal 6 pasos, sistema de multiplicadores (reemplaza candados legacy), sobrecumplimiento (3 modalidades), tipos de medición complejos, variable_source para adicionales, nuevos tipos TypeScript |
+| 1.2 | 2026-01-27 | Integración con Módulo de Cuotas v2.3 |
+| 1.1 | 2026-01-25 | Mapeo flexible de partidas (v2.1 BD) |
 | 1.0 | 2026-01-25 | Versión inicial |
 
 ---
 
 ## 1. RESUMEN EJECUTIVO
 
-El Simulador de Ingresos permite proyectar las comisiones de un HC (asesor/supervisor) basándose en un esquema de comisiones y datos de venta (reales o hipotéticos). 
+### 1.1 Propósito de v2.0
 
-Existen **dos variantes** del simulador:
+Esta versión actualiza el Simulador para soportar la **nueva arquitectura de comisiones v3.4**, que incluye:
 
-| Variante | Usuario | Propósito |
-|----------|---------|-----------|
-| **Simulador Gerencia** | Analista, Gerente, JV | Evaluar esquemas, comparar escenarios, proyectar costos |
-| **Simulador HC** | Asesor, Supervisor | "¿Cuánto voy a ganar?" - Ver proyección personal |
+| Característica | v1.2 (anterior) | v2.0 (nuevo) |
+|----------------|-----------------|--------------|
+| **Candados** | `commission_item_locks` (legacy) | `commission_item_multipliers` (6 tipos) |
+| **Sobrecumplimiento** | `has_cap` + `cap_percentage` | `overcompliance_mode` (3 modalidades) |
+| **Cálculo de contribución** | Solo `percentage` | `contribution_type` (4 tipos) |
+| **Medición de logro** | Solo conteo unidades | `measurement_type` (5 tipos) |
+| **Variable de partida** | Siempre desde Mix | `variable_source` (FROM_MIX / FIXED_EXTRA) |
+| **Motor de cálculo** | Simplificado | Universal 6 pasos |
 
-Ambos usan la misma lógica de cálculo (`simulate_hc_commission`), pero con diferentes interfaces y permisos.
+### 1.2 Esquemas Soportados
 
-### 1.1 Integración de Módulos (v1.2)
+Esta versión está diseñada para **esquemas TEX/PBD** con:
+- `contribution_type`: `PONDERADA` (weighted sum)
+- `range_source`: `CUOTA_PROPIA` (item own)
 
-El Simulador integra datos de **4 módulos**:
+Esquemas Netcall (PXQ_ONLY) y TPF (GLOBAL_CONVERSION_TABLE) se implementarán en v2.1.
+
+### 1.3 Integración de Módulos (actualizado)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    FLUJO DE DATOS → SIMULADOR                               │
+│                    FLUJO DE DATOS → SIMULADOR v2.0                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                   │
 │  │   CUOTAS    │     │ COMISIONES  │     │    INAR     │                   │
-│  │             │     │             │     │             │                   │
+│  │             │     │    v3.4     │     │             │                   │
 │  │ • hc_quotas │     │ • schemes   │     │ lineas_inar │                   │
 │  │ • ss_quota  │     │ • items     │     │ (ventas     │                   │
-│  │ • breakdown │     │ • locks     │     │  oficiales) │                   │
-│  │ • prorrateo │     │ • pxq       │     │             │                   │
-│  └──────┬──────┘     └──────┬──────┘     └──────┬──────┘                   │
+│  │ • breakdown │     │ • multi-    │     │  oficiales) │                   │
+│  │ • prorrateo │     │   pliers    │     │             │                   │
+│  └──────┬──────┘     │ • pxq_scales│     └──────┬──────┘                   │
+│         │            └──────┬──────┘            │                          │
 │         │                   │                   │                          │
 │         │    get_hc_        │                   │                          │
 │         │    effective_     │                   │                          │
@@ -56,10 +67,15 @@ El Simulador integra datos de **4 módulos**:
 │                             │                                              │
 │                             ▼                                              │
 │                   ┌─────────────────────┐                                  │
-│                   │     SIMULADOR       │                                  │
+│                   │   SIMULADOR v2.0    │                                  │
 │                   │                     │                                  │
-│                   │ simulate_hc_        │                                  │
-│                   │ commission()        │                                  │
+│                   │ Motor 6 pasos:      │                                  │
+│                   │ 1. Medir logro      │                                  │
+│                   │ 2. Calcular contrib.│                                  │
+│                   │ 3. Sumar ponderadas │                                  │
+│                   │ 4. Evaluar multip.  │                                  │
+│                   │ 5. Sobrecumplim.    │                                  │
+│                   │ 6. Calcular neto    │                                  │
 │                   └──────────┬──────────┘                                  │
 │                              │                                             │
 │         ┌────────────────────┼────────────────────┐                        │
@@ -71,1428 +87,1374 @@ El Simulador integra datos de **4 módulos**:
 │  │ predict_hc_ │     │ Fijo+Var+   │     │ average,    │                   │
 │  │ penalties() │     │ PxQ+Bonos   │     │ top20, etc  │                   │
 │  └─────────────┘     │ -Penalid.   │     └─────────────┘                   │
+│                      │ +Sobrecump. │                                       │
 │                      └─────────────┘                                       │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Punto clave v1.2:** Las **metas (cuotas)** del HC vienen del **Módulo de Cuotas** (`hc_quotas`), NO del esquema de comisiones. El esquema define las **fórmulas y variables**, las cuotas definen las **metas a cumplir**.
-
 ---
 
-## 2. FLUJOS DE USUARIO POR ROL
+## 2. ANÁLISIS DE GAP (v1.2 → v2.0)
 
-### 2.1 Gerente Comercial / Analista (Simulador Gerencia)
+### 2.1 Archivos a Modificar
 
-#### Flujo A: Simular con perfil predefinido
-```
-1. Navegar a Comisiones > Simulador
-2. Seleccionar esquema (dropdown de esquemas vigentes/draft)
-3. Seleccionar perfil de ventas:
-   - Promedio (75% de cuota)
-   - Top 20% (115% de cuota)
-   - Nuevo ingreso (50% de cuota)
-   - Cuota 100%
-4. Sistema calcula automáticamente
-5. Ver desglose: Fijo + Variable + PxQ + Bonos - Penalidades = Neto
-6. Opcional: Ajustar cantidades manualmente
-7. Opcional: Comparar con otro escenario
-```
+| Archivo | Cambios Necesarios | Prioridad |
+|---------|-------------------|-----------|
+| `lib/simulador/types.ts` | Nuevas interfaces para multipliers, sobrecumplimiento, measurement | 🔴 Alta |
+| `lib/simulador/hooks.ts` | Cargar multipliers, actualizar cálculo local | 🔴 Alta |
+| `lib/comisiones/types.ts` | Nuevos tipos de BD (si no existen) | 🔴 Alta |
+| `components/simulador/ResultBreakdown.tsx` | Mostrar multiplicadores, sobrecumplimiento | 🟡 Media |
+| `components/simulador/SalesInputTable.tsx` | Soporte measurement_type RATE/AVERAGE | 🟡 Media |
+| `components/simulador/SimulationResult.tsx` | Nuevo desglose con sobrecumplimiento | 🟡 Media |
 
-#### Flujo B: Simular con datos manuales
-```
-1. Seleccionar esquema
-2. Click "Ingresar datos manualmente"
-3. Llenar cantidades por partida (OSS, OPP, VR, RENO, etc.)
-4. Opcional: Desglosar por plan (para restricciones)
-5. Sistema calcula en tiempo real
-6. Ver resultado con detalle de cada partida
-```
+### 2.2 Nuevos Campos BD a Consumir
 
-#### Flujo C: Simular HC específico con datos reales (v1.2 actualizado)
-```
-1. Seleccionar esquema
-2. Click "Simular HC específico"
-3. Buscar y seleccionar un usuario HC
-4. Sistema obtiene:
-   a. Cuota efectiva del HC (de hc_quotas via get_hc_effective_quota)
-   b. Factor de prorrateo si aplica
-   c. Ventas reales del período (de lineas_inar o ventas BU)
-   d. Histórico de penalidades para predicción
-5. Ver proyección personalizada con:
-   - Metas ajustadas por prorrateo
-   - Ventas reales del mes
-   - Penalidades predichas
-```
-
-#### Flujo D: Comparar dos escenarios
-```
-1. Crear Escenario A (esquema + datos de venta)
-2. Click "Agregar escenario para comparar"
-3. Crear Escenario B (diferente esquema o mismos datos)
-4. Ver tabla comparativa side-by-side
-5. Ver diferencias resaltadas
-```
-
-#### Flujo E: Proyectar costo total para el SSNN
-```
-1. Seleccionar esquema vigente
-2. Click "Proyección de costos"
-3. Sistema calcula para todos los HC activos
-4. Muestra: Total Fijos + Total Variables + Total PxQ + Total Bonos
-5. Opcional: Exportar a Excel
-```
-
-### 2.2 Jefe de Ventas
-
-**Mismo flujo que Gerente**, pero:
-- Solo puede ver esquemas aprobados (no drafts)
-- No puede ver proyección de costos totales
-- Puede simular HC de su zona únicamente
-
-### 2.3 Asesor / Supervisor (Simulador HC Personal) (v1.2 actualizado)
-
-#### Flujo: Ver mi proyección
-```
-1. Navegar a "Mi Comisión" (acceso directo en dashboard)
-2. Sistema obtiene automáticamente:
-   a. Mi cuota del mes (de hc_quotas via get_hc_effective_quota)
-   b. Mi factor de prorrateo (si ingresé a mitad de mes)
-   c. Esquema vigente asignado
-   d. Mis ventas del mes actual (de INAR/BU)
-3. Sistema muestra:
-   - Mi cuota efectiva (ya prorrateada si aplica)
-   - Mis ventas vs mi meta
-   - Mi proyección de comisión
-   - Mis penalidades predichas
-4. Puede ajustar "¿Qué pasa si vendo X más?"
-5. Ver desglose detallado
-6. Ver progreso vs meta (gráfico)
-```
-
-**Nota v1.2:** Si el HC inició el día 15 de un mes de 31 días, su cuota efectiva es ~55% de la cuota nominal (17/31 = 0.548). El simulador muestra esto claramente.
-
----
-
-## 3. PANTALLAS Y COMPONENTES
-
-### 3.1 Simulador Gerencia (`/comisiones/simulador`)
-
-**Propósito:** Herramienta de análisis para evaluar esquemas y proyectar comisiones
-
-**Permisos:** ADMIN, GERENTE_COMERCIAL, GERENTE_GENERAL, JEFE_VENTAS, BACKOFFICE_OPERACIONES
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Simulador de Ingresos HC                                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ CONFIGURACIÓN                                                       │   │
-│  │                                                                     │   │
-│  │ Esquema: [Esquema Asesor Enero 2026 (Aprobado) ▼]                  │   │
-│  │                                                                     │   │
-│  │ Datos de venta:                                                     │   │
-│  │ (●) Perfil predefinido  ( ) Manual  ( ) HC específico              │   │
-│  │                                                                     │   │
-│  │ Perfil: [Promedio ▼] [Top 20%] [Nuevo] [Cuota 100%] [Personalizado]│   │
-│  │                                                                     │   │
-│  │ ☑ Incluir predicción de penalidades (requiere seleccionar HC)      │   │
-│  │ ☐ Comparar con otro escenario                                       │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ DATOS DE VENTA                                          [Limpiar]  │   │
-│  │                                                                     │   │
-│  │  Partida       │ Meta  │ Cantidad │ Cumpl. │ Indicador             │   │
-│  │ ───────────────┼───────┼──────────┼────────┼─────────────────────  │   │
-│  │  OSS           │ 31.5  │ [__24__] │  76%   │ ████████░░  76%       │   │
-│  │  OPP           │ 5.6   │ [___4__] │  71%   │ ███████░░░  71%       │   │
-│  │  VR_BASE       │ 21    │ [__16__] │  76%   │ ████████░░  76%       │   │
-│  │  VR_CAPTURA    │ 11.9  │ [___9__] │  76%   │ ████████░░  76%       │   │
-│  │ ───────────────┼───────┼──────────┼────────┼─────────────────────  │   │
-│  │  RENO_SS       │ 20    │ [__15__] │  75%   │ ████████░░  75%       │   │
-│  │  PACK_SS       │ 10    │ [___8__] │  80%   │ ████████░░  80%       │   │
-│  │  PREPAGO       │ 50    │ [__38__] │  76%   │ ████████░░  76%       │   │
-│  │  MEP (Seguros) │ 2     │ [___2__] │ 100%   │ ██████████ 100% ✓     │   │
-│  │ ───────────────┼───────┼──────────┼────────┼─────────────────────  │   │
-│  │  Cuota SS Total│ 70    │    53    │  76%   │ ████████░░  76%       │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│                                                    [Calcular Comisión]     │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-### 3.2 Resultado de Simulación
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  RESULTADO DE SIMULACIÓN                                    [📥 Exportar]  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                                                                     │   │
-│  │   INGRESO PROYECTADO                                               │   │
-│  │   ┌─────────────────────────────────────────────────────────────┐  │   │
-│  │   │                                                             │  │   │
-│  │   │    S/. 1,847.50                                            │  │   │
-│  │   │    ════════════                                            │  │   │
-│  │   │    Cumplimiento global: 76%                                 │  │   │
-│  │   │                                                             │  │   │
-│  │   └─────────────────────────────────────────────────────────────┘  │   │
-│  │                                                                     │   │
-│  │   DESGLOSE                                                          │   │
-│  │   ┌───────────────────┬────────────┬─────────────────────────────┐ │   │
-│  │   │ Concepto          │ Monto      │ Detalle                     │ │   │
-│  │   ├───────────────────┼────────────┼─────────────────────────────┤ │   │
-│  │   │ Sueldo Fijo       │ S/. 1,050  │ Base mensual                │ │   │
-│  │   │ Variable          │ S/.   612  │ 76% de S/.805 (principales) │ │   │
-│  │   │ Adicionales       │ S/.   135  │ RENO + PACK + PP            │ │   │
-│  │   │ PxQ               │ S/.    75  │ 5 portas × S/.15            │ │   │
-│  │   │ Bonos             │ S/.     0  │ NPS no alcanzado            │ │   │
-│  │   ├───────────────────┼────────────┼─────────────────────────────┤ │   │
-│  │   │ BRUTO             │ S/. 1,872  │                             │ │   │
-│  │   │ (-) Penalidades   │ S/.   -25  │ 1 Port Out predicho         │ │   │
-│  │   ├───────────────────┼────────────┼─────────────────────────────┤ │   │
-│  │   │ NETO PROYECTADO   │ S/. 1,847  │                             │ │   │
-│  │   └───────────────────┴────────────┴─────────────────────────────┘ │   │
-│  │                                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  [Ver detalle por partida ▼]                                               │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-### 3.3 Detalle por Partida (Expandible)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  DETALLE POR PARTIDA                                                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ▼ PARTIDAS PRINCIPALES                                         S/. 612.00 │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ Partida    │ Meta │ Logro │ Cumpl. │ Variable │ Comisión │ Estado  │   │
-│  ├────────────┼──────┼───────┼────────┼──────────┼──────────┼─────────┤   │
-│  │ OSS        │ 31.5 │ 24    │ 76.2%  │ S/.324   │ S/.247   │ ✓ OK    │   │
-│  │ OPP        │ 5.6  │ 4     │ 71.4%  │ S/.82    │ S/.59    │ ✓ OK    │   │
-│  │ VR_BASE    │ 21   │ 16    │ 76.2%  │ S/.308   │ S/.235   │ ✓ OK    │   │
-│  │ VR_CAPTURA │ 11.9 │ 9     │ 75.6%  │ S/.174   │ S/.132   │ ✓ OK    │   │
-│  │            │      │       │        │          │ ──────── │         │   │
-│  │            │      │       │        │ SUBTOTAL │ S/.612   │         │   │
-│  └────────────┴──────┴───────┴────────┴──────────┴──────────┴─────────┘   │
-│                                                                             │
-│  ▼ PARTIDAS ADICIONALES                                         S/. 135.00 │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ Partida    │ Meta │ Logro │ Cumpl. │ Variable │ Comisión │ Estado  │   │
-│  ├────────────┼──────┼───────┼────────┼──────────┼──────────┼─────────┤   │
-│  │ RENO_SS    │ 20   │ 15    │ 75%    │ S/.120   │ S/.90    │ ✓ OK    │   │
-│  │  └─ 🔒 MEP │ 2    │ 2     │ 100%   │ -        │ -        │ ✓ Libre │   │
-│  │ PACK_SS    │ 10   │ 8     │ 80%    │ S/.60    │ S/.48    │ ✓ OK    │   │
-│  │  └─ 🔒 MEP │ 2    │ 2     │ 100%   │ -        │ -        │ ✓ Libre │   │
-│  │ PREPAGO    │ 50   │ 38    │ 76%    │ -        │ S/.-3    │ ✓ OK    │   │
-│  │            │      │       │        │ SUBTOTAL │ S/.135   │         │   │
-│  └────────────┴──────┴───────┴────────┴──────────┴──────────┴─────────┘   │
-│                                                                             │
-│  ▶ PARTIDAS PxQ                                                  S/. 75.00 │
-│  ▶ BONOS                                                          S/. 0.00 │
-│  ▶ PENALIDADES PREDICHAS                                        S/. -25.00 │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-### 3.4 Comparación de Escenarios
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  COMPARACIÓN DE ESCENARIOS                                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌───────────────────────────────┬───────────────────────────────┐         │
-│  │ ESCENARIO A                   │ ESCENARIO B                   │         │
-│  │ Esquema Asesor Ene (Actual)   │ Esquema Asesor Feb (Draft)    │         │
-│  ├───────────────────────────────┼───────────────────────────────┤         │
-│  │                               │                               │         │
-│  │ Sueldo Fijo:      S/. 1,050  │ Sueldo Fijo:      S/. 1,050  │         │
-│  │ Variable:         S/.   612  │ Variable:         S/.   680  │ ↑ +68   │
-│  │ PxQ:              S/.    75  │ PxQ:              S/.    90  │ ↑ +15   │
-│  │ Bonos:            S/.     0  │ Bonos:            S/.    50  │ ↑ +50   │
-│  │ Penalidades:      S/.   -25  │ Penalidades:      S/.   -25  │         │
-│  │ ─────────────────────────────│───────────────────────────────│         │
-│  │ NETO:             S/. 1,712  │ NETO:             S/. 1,845  │ ↑ +133  │
-│  │                               │                               │         │
-│  │        [Ver detalle]         │        [Ver detalle]          │         │
-│  └───────────────────────────────┴───────────────────────────────┘         │
-│                                                                             │
-│  DIFERENCIA: Escenario B paga S/. 133 más (+7.8%)                          │
-│                                                                             │
-│  [Intercambiar] [Nuevo escenario A] [Nuevo escenario B] [Exportar]         │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-### 3.5 Selección de HC Específico (Modal)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Seleccionar HC para Simulación                                       [X]  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  🔍 Buscar: [_________________]  [Buscar]                                  │
-│                                                                             │
-│  Filtrar por:                                                               │
-│  Tienda: [Todas ▼]  Rol: [Todos ▼]  Zona: [Todas ▼]                       │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ ( ) │ Nombre              │ Código         │ Tienda      │ Rol     │   │
-│  ├─────┼─────────────────────┼────────────────┼─────────────┼─────────┤   │
-│  │ (●) │ Ana García López    │ PBD_AGARCIA    │ TE Agustino │ Asesor  │   │
-│  │ ( ) │ Carlos Pérez M.     │ PBD_CPEREZ     │ TE VES      │ Asesor  │   │
-│  │ ( ) │ María Rodríguez     │ PBD_MRODRIGUEZ │ TE VMT      │ Asesor  │   │
-│  │ ( ) │ Juan Torres         │ PBD_JTORRES    │ TE Comas    │ Superv. │   │
-│  └─────┴─────────────────────┴────────────────┴─────────────┴─────────┘   │
-│                                                                             │
-│  Mostrando 4 de 45 usuarios                                                │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ HC Seleccionado: Ana García López                                   │   │
-│  │                                                                     │   │
-│  │ Cuota del mes (hc_quotas):                                         │   │
-│  │   • SS Total: 70 → Efectiva: 58 (prorrateo 0.83)                   │   │
-│  │   • Inicio: 2026-01-05                                              │   │
-│  │                                                                     │   │
-│  │ Ventas del mes (INAR): 47 líneas SS                                │   │
-│  │ Penalidades históricas: 2 en últimos 6 meses                        │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│                                        [Cancelar]  [Simular con este HC]   │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-### 3.6 Simulador HC Personal (`/mi-comision`) (v1.2 actualizado)
-
-**Propósito:** Vista simplificada para que el HC vea su proyección personal
-
-**Permisos:** ASESOR, ASESOR_REFERENTE, COORDINADOR, SUPERVISOR
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Mi Comisión - Enero 2026                                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                                                                     │   │
-│  │   Hola, Ana García 👋                                              │   │
-│  │                                                                     │   │
-│  │   Tu proyección de ingresos este mes:                              │   │
-│  │                                                                     │   │
-│  │   ┌─────────────────────────────────────────────────────────────┐  │   │
-│  │   │                                                             │  │   │
-│  │   │         S/. 1,847                                          │  │   │
-│  │   │         ══════════                                          │  │   │
-│  │   │                                                             │  │   │
-│  │   │   Fijo: S/.1,050  +  Variable: S/.797  =  Bruto: S/.1,847  │  │   │
-│  │   │                                                             │  │   │
-│  │   └─────────────────────────────────────────────────────────────┘  │   │
-│  │                                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  TU CUOTA Y PRORRATEO (v1.2)                                        │   │
-│  │                                                                     │   │
-│  │  Cuota SS asignada:     70 unidades                                │   │
-│  │  Tu fecha de inicio:    05/Ene/2026                                │   │
-│  │  Factor prorrateo:      0.87 (27 de 31 días)                       │   │
-│  │  ─────────────────────────────────────────────────────────────     │   │
-│  │  TU CUOTA EFECTIVA:     61 unidades                                │   │
-│  │                                                                     │   │
-│  │  💡 Tu meta está ajustada porque ingresaste el día 5 del mes       │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  TU AVANCE DEL MES                                                  │   │
-│  │                                                                     │   │
-│  │  Líneas SS                                                          │   │
-│  │  ██████████████████████████████████████░░░░░░░░░░  77%             │   │
-│  │  47 de 61 (meta efectiva)                                          │   │
-│  │                                                                     │   │
-│  │  Te faltan 14 líneas para llegar al 100%                           │   │
-│  │  Si vendes 7 más llegas al 89% (+S/. 85 estimado)                  │   │
-│  │                                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  [¿Qué pasa si vendo más? ▼]                                              │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-### 3.7 Desglose de Comisión HC (v1.2 actualizado)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Desglose de tu Comisión                                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  SUELDO FIJO                                                    S/. 1,050  │
-│  ─────────────────────────────────────────────────────────────────────────  │
-│                                                                             │
-│  PARTIDAS PRINCIPALES                                                       │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ Partida     │ Tu meta* │ Vendiste │ Cumpliste │ Ganas              │   │
-│  ├─────────────┼──────────┼──────────┼───────────┼────────────────────┤   │
-│  │ OSS         │ 27.4     │ 24       │ 88%       │ S/. 285            │   │
-│  │ OPP         │ 4.9      │ 4        │ 82%       │ S/. 67             │   │
-│  │ VR LLAA     │ 18.3     │ 16       │ 87%       │ S/. 268            │   │
-│  │ VR Captura  │ 10.4     │ 9        │ 87%       │ S/. 151            │   │
-│  │             │          │          │ SUBTOTAL  │ S/. 771            │   │
-│  └─────────────┴──────────┴──────────┴───────────┴────────────────────┘   │
-│  * Metas ajustadas por tu prorrateo (0.87)                                 │
-│                                                                             │
-│  PARTIDAS ADICIONALES                                                       │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ Partida     │ Tu meta  │ Vendiste │ Cumpliste │ Ganas              │   │
-│  ├─────────────┼──────────┼──────────┼───────────┼────────────────────┤   │
-│  │ Renovación  │ 17.4     │ 15       │ 86%       │ S/. 103            │   │
-│  │ Pack SS     │ 8.7      │ 8        │ 92%       │ S/. 55             │   │
-│  │ Prepago     │ 43.5     │ 38       │ 87%       │ S/. -              │   │
-│  │             │          │          │ SUBTOTAL  │ S/. 158            │   │
-│  └─────────────┴──────────┴──────────┴───────────┴────────────────────┘   │
-│                                                                             │
-│  🔒 CANDADOS                                                               │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ Para cobrar RENO y PACK necesitas vender 2 seguros MEP             │   │
-│  │ Tu avance: 2 de 2 ✓ CANDADO LIBERADO                               │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  BONOS PxQ                                                       S/. 75    │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ Portabilidad: 5 unidades × S/.15 (rango 61-80%) = S/. 75           │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ⚠️ PENALIDADES ESTIMADAS                                       S/. -25   │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ Basado en tu histórico, estimamos:                                  │   │
-│  │ - Port Out: ~1 caso (S/.25)                                         │   │
-│  │ Esto es una estimación. El monto real puede variar.                 │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ═══════════════════════════════════════════════════════════════════════   │
-│  TOTAL PROYECTADO                                               S/. 2,029  │
-│  ═══════════════════════════════════════════════════════════════════════   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-### 3.8 Proyección de Costos SSNN (Solo Gerencia)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Proyección de Costos - Enero 2026                            [📥 Exportar]│
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  Esquema: Asesor Enero 2026 (Aprobado)                                     │
-│  Perfil de ventas: Promedio histórico                                       │
-│  HC incluidos: 42 asesores activos                                          │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                                                                     │   │
-│  │   COSTO TOTAL PROYECTADO                                           │   │
-│  │                                                                     │   │
-│  │   S/. 77,595.00                                                    │   │
-│  │   ════════════════                                                 │   │
-│  │                                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  DESGLOSE                                                                   │
-│  ┌───────────────────┬────────────────┬─────────────────────────────────┐  │
-│  │ Concepto          │ Total          │ Promedio por HC                 │  │
-│  ├───────────────────┼────────────────┼─────────────────────────────────┤  │
-│  │ Sueldos Fijos     │ S/. 44,100     │ S/. 1,050                       │  │
-│  │ Variables         │ S/. 25,704     │ S/. 612                         │  │
-│  │ PxQ               │ S/. 3,150      │ S/. 75                          │  │
-│  │ Bonos             │ S/. 2,100      │ S/. 50                          │  │
-│  │ ──────────────────┼────────────────┼─────────────────────────────────┤  │
-│  │ BRUTO             │ S/. 75,054     │ S/. 1,787                       │  │
-│  │ (+) Cargas social │ S/. 2,541      │ (estimado 3.4%)                 │  │
-│  │ ──────────────────┼────────────────┼─────────────────────────────────┤  │
-│  │ COSTO TOTAL       │ S/. 77,595     │ S/. 1,848                       │  │
-│  └───────────────────┴────────────────┴─────────────────────────────────┘  │
-│                                                                             │
-│  DISTRIBUCIÓN POR TIENDA                                                    │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ Tienda        │ HC │ Costo Fijo │ Costo Var. │ Total      │ % Tot  │   │
-│  ├───────────────┼────┼────────────┼────────────┼────────────┼────────┤   │
-│  │ TE Agustino   │ 3  │ S/. 3,150  │ S/. 1,836  │ S/. 4,986  │ 6.4%   │   │
-│  │ TE VES        │ 4  │ S/. 4,200  │ S/. 2,448  │ S/. 6,648  │ 8.6%   │   │
-│  │ TE VMT        │ 3  │ S/. 3,150  │ S/. 1,836  │ S/. 4,986  │ 6.4%   │   │
-│  │ ...           │    │            │            │            │        │   │
-│  └───────────────┴────┴────────────┴────────────┴────────────┴────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 4. REGLAS DE NEGOCIO DEL SIMULADOR
-
-### 4.1 Cálculo de Comisión por Porcentaje
-
-```
-Para cada partida tipo "percentage":
-
-1. cumplimiento = logro / meta_efectiva  ← (v1.2: usa cuota prorrateada)
-2. SI cumplimiento < min_fulfillment:
-      comision = 0
-3. SI tiene_tope Y cumplimiento > cap_percentage:
-      cumplimiento_efectivo = cap_percentage
-   SINO:
-      cumplimiento_efectivo = cumplimiento
-4. comision = variable_amount × cumplimiento_efectivo
-```
-
-### 4.2 Cálculo de Comisión PxQ
-
-```
-Para cada partida tipo "pxq":
-
-1. Determinar cumplimiento_global (total SS vendido / cuota SS efectiva)
-2. Buscar escala PxQ donde:
-   min_fulfillment <= cumplimiento_global <= max_fulfillment
-3. SI no hay escala aplicable:
-      comision = 0
-4. SINO:
-      comision = cantidad_vendida × amount_per_unit
-```
-
-### 4.3 Verificación de Candados
-
-```
-Para cada partida con candados:
-
-1. Obtener lista de candados activos
-2. Para cada candado:
-   - SI tipo = "min_quantity":
-     verificar = ventas[required_item_type] >= required_value
-   - SI tipo = "min_amount":
-     verificar = monto[required_item_type] >= required_value
-   - SI tipo = "min_percentage":
-     verificar = cumplimiento[required_item_type] >= required_value
-3. SI todos los candados verificados:
-      candado_liberado = true
-      partida comisiona normalmente
-4. SINO:
-      candado_liberado = false
-      comision_partida = 0
-```
-
-### 4.4 Aplicación de Restricciones
-
-```
-Para cada restricción activa:
-
-1. SI tipo = "max_percentage":
-   max_unidades = cuota_efectiva × max_percentage
-   unidades_plan = ventas_por_plan[plan_code]
-   SI unidades_plan > max_unidades:
-      exceso = unidades_plan - max_unidades
-      logro_efectivo = logro - exceso
-
-2. SI tipo = "max_quantity":
-   SI ventas_plan[plan_code] > max_quantity:
-      exceso = ventas_plan[plan_code] - max_quantity
-      logro_efectivo = logro - exceso
-```
-
-### 4.5 Predicción de Penalidades
-
-```
-1. Obtener historial de penalidades del HC (últimos 6 meses)
-2. Para cada tipo de penalidad predecible:
-   - Calcular promedio mensual
-   - Calcular desviación estándar
-   - Calcular confianza = 1 - (stddev / promedio)
-3. Multiplicar promedio × monto_equivalencia
-4. Retornar suma de penalidades predichas con confianza
-```
-
-### 4.6 Perfiles de Venta Predefinidos
-
-| Perfil | Descripción | Multiplicador |
-|--------|-------------|---------------|
-| `average` | HC promedio | 75% de cada meta efectiva |
-| `top20` | Top 20% performers | 115% de cada meta efectiva |
-| `new` | Nuevo ingreso | 50% de cada meta efectiva |
-| `quota100` | Cumple exacto | 100% de cada meta efectiva |
-
-### 4.7 Fuentes de Datos de Venta
-
-| Fuente | Prioridad | Descripción |
-|--------|-----------|-------------|
-| `lineas_inar` | 1 | Ventas confirmadas (oficial) |
-| `ventas` | 2 | Ventas declarativas (BU) |
-| Manual | 3 | Ingresado por usuario |
-
-Para HC específico: Se prioriza INAR si existe data del período; si no, se usa BU.
-
-### 4.8 Obtención de Cuota Efectiva (v1.2 NUEVO)
-
-```
-Para obtener la cuota del HC:
-
-1. Llamar get_hc_effective_quota(user_id, year, month)
-2. Retorna:
-   - ss_quota: Cuota asignada nominal
-   - effective_quota: Cuota con prorrateo aplicado
-   - proration_factor: Factor (0-1)
-   - quota_breakdown: {"OSS": 31.5, "VR": 21, ...}
-   - start_date: Fecha de inicio (si aplica prorrateo)
-
-3. La meta de cada partida se calcula:
-   meta_partida = quota_breakdown[partida] × proration_factor
-
-4. Si no existe cuota en hc_quotas para el período:
-   - Usar cuota del esquema como fallback
-   - Mostrar advertencia: "Sin cuota asignada, usando valores del esquema"
-```
-
----
-
-## 5. MATRIZ DE PERMISOS
-
-| Funcionalidad | ADMIN | GERENTE_COMERCIAL | GERENTE_GENERAL | JEFE_VENTAS | BACKOFFICE_OP | ASESOR/SUPERV |
-|---------------|-------|-------------------|-----------------|-------------|---------------|---------------|
-| Ver simulador gerencia | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Simular cualquier esquema | ✅ | ✅ | ✅ | ✅ (solo aprobados) | ✅ | ❌ |
-| Simular esquemas draft | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
-| Simular cualquier HC | ✅ | ✅ | ✅ | ✅ (su zona) | ✅ | ❌ |
-| Comparar escenarios | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Ver proyección costos | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| Exportar resultados | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Ver Mi Comisión (personal) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Simular "¿Qué pasa si?" | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-
----
-
-## 6. INTEGRACIÓN CON DATOS EXISTENTES
-
-### 6.1 Obtener Esquema Vigente
-
+#### En `commission_schemes`:
 ```typescript
-// Para simulador gerencia - todos los esquemas
-const { data: schemes } = await supabase
-  .from('commission_schemes')
-  .select('*')
-  .in('status', ['aprobado', 'draft'])
-  .order('year', { ascending: false })
-  .order('month', { ascending: false });
-
-// Para simulador HC - solo el asignado
-const { data: assignment } = await supabase
-  .from('commission_hc_assignments')
-  .select(`
-    *,
-    scheme:commission_schemes(*)
-  `)
-  .eq('user_id', currentUserId)
-  .eq('is_active', true)
-  .single();
+accelerator_base: 'VARIABLE_TEORICO' | 'VARIABLE_CALCULADO'
+conversion_table: JSONB | null
+global_range_method: 'CUMPLIMIENTO_DIRECTO' | 'TABLA_CONVERSION'
 ```
 
-### 6.2 Obtener Cuota Efectiva del HC (v1.2 NUEVO)
-
+#### En `commission_scheme_items`:
 ```typescript
-// Obtener cuota del módulo de Cuotas (NO del esquema de comisiones)
-const { data: hcQuota, error } = await supabase
-  .rpc('get_hc_effective_quota', {
-    p_user_id: userId,
-    p_year: year,
-    p_month: month
-  });
+// Contribución y rango
+contribution_type: 'PONDERADA' | 'ACELERADOR' | 'PXQ_INDEPENDIENTE' | 'BONO'
+range_source: 'CUOTA_PROPIA' | 'VOLUMEN_GLOBAL' | 'CUOTA_GLOBAL_SS'
+uses_conversion_table: boolean
+accelerator_ranges: JSONB | null
 
-// Resultado:
-interface HCEffectiveQuota {
-  ss_quota: number;           // Cuota nominal asignada
-  effective_quota: number;    // Cuota con prorrateo
-  proration_factor: number;   // Factor 0-1
-  quota_breakdown: {          // Desglose por partida
-    OSS: number;
-    OPP: number;
-    VR_BASE: number;
-    VR_CAPTURA: number;
-    // ... etc
-  };
-  start_date: string | null;  // Fecha inicio si hay prorrateo
-  store_id: string;
-  store_name: string;
-}
+// Sobrecumplimiento (v3.0.1)
+overcompliance_mode: 'none' | 'proportional' | 'pxq_bonus'
+cap_units: number | null
+pxq_bonus_amount: number | null
+overcap_max_units: number | null
+overcap_max_amount: number | null
 
-// Si no hay cuota asignada, usar fallback del esquema
-if (!hcQuota || error) {
-  console.warn('Sin cuota asignada, usando valores del esquema');
-  // Usar quotas de commission_scheme_items
+// Medición compleja (v3.3)
+measurement_type: 'UNIT_COUNT' | 'AVERAGE_VALUE' | 'TOTAL_VALUE' | 'RATE' | 'MANUAL'
+fulfillment_method: 'RATIO' | 'ABSOLUTE_RANGES'
+measurement_config: JSONB | null
+
+// Fuente de variable (v3.4)
+variable_source: 'FROM_MIX' | 'FIXED_EXTRA'
+```
+
+#### Nueva tabla `commission_item_multipliers`:
+```typescript
+interface CommissionItemMultiplier {
+  id: string
+  item_id: string
+  multiplier_type: 'LOCK' | 'ACCELERATOR' | 'DECELERATOR' | 'PROPORTIONAL' | 'CROSS_PRODUCT' | 'TIERED'
+  activation_criteria: 'MIN_QUANTITY' | 'OWN_ATTAINMENT' | 'OTHER_ATTAINMENT' | 'GLOBAL_ATTAINMENT' | 'ATTAINMENT_RANGE' | 'OPERATOR_ORIGIN'
+  source_description: string
+  source_item_id: string | null
+  threshold_value: number | null
+  factor_if_met: number
+  factor_if_not_met: number
+  tiered_ranges: TieredRanges | null
+  operator_cedente: string | null
+  measurement_type: 'UNIT_COUNT' | 'RATE' | 'AVERAGE_VALUE' | 'MANUAL'
+  measurement_config: JSONB | null
+  is_active: boolean
+  display_order: number
 }
 ```
 
-### 6.3 Obtener Partidas del Esquema (v2.1)
+---
+
+## 3. NUEVOS TIPOS TYPESCRIPT
+
+### 3.1 types.ts - Nuevas Interfaces
 
 ```typescript
-// Opción A: Query directo con joins
-const { data: items } = await supabase
-  .from('commission_scheme_items')
-  .select(`
-    *,
-    item_type:commission_item_types(*),
-    preset:partition_presets(*),
-    locks:commission_item_locks(*),
-    pxq_scales:commission_pxq_scales(*),
-    mapped_tipos_venta:commission_item_ventas(
-      tipo_venta_id,
-      cuenta_linea,
-      cuenta_equipo,
-      tipo_venta:tipos_venta(codigo, nombre, categoria)
-    )
-  `)
-  .eq('scheme_id', schemeId)
-  .eq('is_active', true)
-  .order('display_order');
+// ============================================================================
+// TIPOS DE COMISIONES v3.4 (NUEVO)
+// ============================================================================
 
-// Opción B: Usar la vista consolidada (recomendado)
-const { data: items } = await supabase
-  .from('vw_scheme_item_ventas')
-  .select('*')
-  .eq('scheme_id', schemeId)
-  .eq('is_active', true)
-  .order('display_order');
+/**
+ * Tipo de contribución de una partida al total
+ */
+export type ContributionType = 
+  | 'PONDERADA'           // Contribuye con peso% al variable
+  | 'ACELERADOR'          // Ajusta ±% del variable base
+  | 'PXQ_INDEPENDIENTE'   // Monto independiente por unidad
+  | 'BONO'                // Todo o nada si cumple condición
 
-// La vista retorna:
-// - item_name: COALESCE(custom_name, item_type.name, preset.name)
-// - tipos_venta_mapeados: JSON array con tipos de venta que suman a esta partida
-```
+/**
+ * Fuente del rango para calcular cumplimiento
+ */
+export type RangeSource = 
+  | 'CUOTA_PROPIA'        // Cuota de la partida (TEX)
+  | 'VOLUMEN_GLOBAL'      // Volumen total vendido
+  | 'CUOTA_GLOBAL_SS'     // Cuota global SS del esquema
 
-**Nota v2.1:** Las partidas pueden:
-1. Tener `item_type_id` (referencia al catálogo legacy)
-2. Tener `preset_id` (usar preset como plantilla)
-3. Tener `custom_name` (partida completamente personalizada)
-4. El mapeo real está en `commission_item_ventas`
+/**
+ * Modo de sobrecumplimiento
+ */
+export type OvercomplianceMode = 
+  | 'none'                // Comisión se detiene al 100%
+  | 'proportional'        // Continúa proporcional (con o sin tope)
+  | 'pxq_bonus'           // A partir del 100%, paga monto por unidad extra
 
-### 6.4 Obtener Ventas Reales de INAR y Mapear a Partidas (v2.1)
+/**
+ * Tipo de medición del logro
+ */
+export type MeasurementType = 
+  | 'UNIT_COUNT'          // Conteo de ventas (default)
+  | 'AVERAGE_VALUE'       // Promedio de un campo (ej: cargo fijo)
+  | 'TOTAL_VALUE'         // Suma de un campo (ej: ingresos)
+  | 'RATE'                // Ratio condición/total × 100
+  | 'MANUAL'              // Valor externo (ej: NPS)
 
-```typescript
-// Paso 1: Obtener ventas del mes para un HC específico
-const { data: sales } = await supabase
-  .from('lineas_inar')
-  .select('*')
-  .eq('vchvendedordni', userDni)
-  .gte('dtefecha_alta', startOfMonth)
-  .lte('dtefecha_alta', endOfMonth);
+/**
+ * Método de cálculo del cumplimiento
+ */
+export type FulfillmentMethod = 
+  | 'RATIO'               // (logro / meta) × 100
+  | 'ABSOLUTE_RANGES'     // Valor directo busca en rangos
 
-// Paso 2: Clasificar cada venta por tipo_venta
-const classifiedSales = sales.map(sale => ({
-  ...sale,
-  tipo_venta_codigo: classifyInarRecord(sale) // Determina OSS_BASE, VR_MONO, etc.
-}));
+/**
+ * Fuente del variable de la partida
+ */
+export type VariableSource = 
+  | 'FROM_MIX'            // Variable = mix_factor × variable_salary
+  | 'FIXED_EXTRA'         // Variable es monto fijo independiente
 
-// Paso 3: Agrupar usando los mapeos de la partida
-// Cada partida tiene tipos_venta_mapeados con cuenta_linea/cuenta_equipo
-function groupSalesByPartition(
-  sales: ClassifiedSale[], 
-  schemeItems: SchemeItemWithMapping[]
-): SalesData {
-  const result: SalesData = {};
+// ============================================================================
+// TIPOS DE MULTIPLICADORES (v3.2)
+// ============================================================================
+
+/**
+ * Tipos de multiplicador
+ */
+export type MultiplierType = 
+  | 'LOCK'                // Candado binario (0 o 1)
+  | 'ACCELERATOR'         // Bonus por buen desempeño (>1)
+  | 'DECELERATOR'         // Penalización por bajo desempeño (<1)
+  | 'PROPORTIONAL'        // Factor proporcional al cumplimiento
+  | 'CROSS_PRODUCT'       // Factor depende de otra partida
+  | 'TIERED'              // Factor según rangos escalonados
+
+/**
+ * Criterio de activación del multiplicador
+ */
+export type ActivationCriteria = 
+  | 'MIN_QUANTITY'        // Cantidad mínima vendida
+  | 'OWN_ATTAINMENT'      // % cumplimiento de esta partida
+  | 'OTHER_ATTAINMENT'    // % cumplimiento de otra partida
+  | 'GLOBAL_ATTAINMENT'   // % cumplimiento global SS
+  | 'ATTAINMENT_RANGE'    // Rango de cumplimiento
+  | 'OPERATOR_ORIGIN'     // % de ventas de un operador
+
+/**
+ * Rango para multiplicadores TIERED
+ */
+export interface TieredRange {
+  min: number
+  max: number | null      // null = sin límite
+  factor: number
+  label: string
+}
+
+/**
+ * Configuración de rangos escalonados
+ */
+export interface TieredRanges {
+  ranges: TieredRange[]
+}
+
+/**
+ * Multiplicador de una partida
+ */
+export interface ItemMultiplier {
+  id: string
+  itemId: string
+  multiplierType: MultiplierType
+  activationCriteria: ActivationCriteria
+  sourceDescription: string
+  sourceItemId: string | null
+  thresholdValue: number | null
+  factorIfMet: number
+  factorIfNotMet: number
+  tieredRanges: TieredRanges | null
+  operatorCedente: string | null
+  measurementType: MeasurementType
+  measurementConfig: MeasurementConfig | null
+  isActive: boolean
+  displayOrder: number
+}
+
+/**
+ * Estado de evaluación de un multiplicador
+ */
+export interface MultiplierEvaluation {
+  multiplier: ItemMultiplier
+  conditionMet: boolean
+  appliedFactor: number
+  currentValue: number        // Valor actual del criterio evaluado
+  requiredValue: number | null // Valor requerido (umbral)
+  description: string         // Descripción para UI
+}
+
+// ============================================================================
+// CONFIGURACIÓN DE MEDICIÓN (v3.3)
+// ============================================================================
+
+/**
+ * Config para AVERAGE_VALUE / TOTAL_VALUE
+ */
+export interface MeasurementConfigValue {
+  value_field: string         // Campo a agregar (ej: "cargo_fijo")
+  description: string
+}
+
+/**
+ * Config para RATE
+ */
+export interface MeasurementConfigRate {
+  condition_field: string     // Campo a evaluar (ej: "tiene_descuento")
+  condition_value: boolean | string | number
+  scope_tipos_venta?: string[] // Tipos de venta a incluir
+  description: string
+}
+
+/**
+ * Configuración de medición (union type)
+ */
+export type MeasurementConfig = MeasurementConfigValue | MeasurementConfigRate
+
+// ============================================================================
+// CONFIGURACIÓN DE SOBRECUMPLIMIENTO (v3.0.1)
+// ============================================================================
+
+/**
+ * Configuración de sobrecumplimiento de una partida
+ */
+export interface OvercomplianceConfig {
+  mode: OvercomplianceMode
+  capUnits: number | null           // Unidades máximas (proportional)
+  pxqBonusAmount: number | null     // Monto por unidad extra (pxq_bonus)
+  overcapMaxUnits: number | null    // Máximo unidades bonus
+  overcapMaxAmount: number | null   // Máximo monto bonus
+}
+
+/**
+ * Resultado de sobrecumplimiento
+ */
+export interface OvercomplianceResult {
+  mode: OvercomplianceMode
+  baseCommission: number            // Comisión hasta 100%
+  bonusCommission: number           // Comisión adicional por sobrecumplimiento
+  bonusUnits: number                // Unidades sobre la meta
+  cappedUnits: number | null        // Unidades después de aplicar tope
+  cappedAmount: number | null       // Monto después de aplicar tope
+  totalCommission: number
+}
+
+// ============================================================================
+// PARTIDA ACTUALIZADA (v2.0)
+// ============================================================================
+
+/**
+ * Partida con todos los campos v3.4
+ */
+export interface SchemeItemV2 {
+  id: string
+  scheme_id: string
+  item_type_id: string | null
+  preset_id: string | null
+  custom_name: string | null
+  custom_description: string | null
   
-  for (const item of schemeItems) {
-    const itemName = item.custom_name || item.item_type?.code || item.preset?.code;
-    let count = 0;
-    
-    // Cada partida tiene su lista de tipos_venta mapeados
-    for (const mapping of item.mapped_tipos_venta || []) {
-      const matchingSales = sales.filter(
-        s => s.tipo_venta_codigo === mapping.tipo_venta.codigo
-      );
-      
-      for (const sale of matchingSales) {
-        // Una venta puede contar como línea, equipo, o ambos
-        if (mapping.cuenta_linea && sale.tiene_linea) count++;
-        if (mapping.cuenta_equipo && sale.tiene_equipo) count++;
-      }
-    }
-    
-    result[itemName] = count;
+  // Cuota y peso
+  quota: number | null
+  weight_percent: number | null
+  variable_amount: number
+  variable_source: VariableSource
+  mix_factor: number | null
+  
+  // Contribución y rango
+  contribution_type: ContributionType
+  range_source: RangeSource
+  uses_conversion_table: boolean
+  
+  // Cumplimiento
+  min_fulfillment: number | null
+  calculation_type: CalculationType
+  
+  // Sobrecumplimiento
+  overcompliance_mode: OvercomplianceMode
+  cap_units: number | null
+  pxq_bonus_amount: number | null
+  overcap_max_units: number | null
+  overcap_max_amount: number | null
+  
+  // Medición
+  measurement_type: MeasurementType
+  fulfillment_method: FulfillmentMethod
+  measurement_config: MeasurementConfig | null
+  
+  // Aceleradores individuales
+  accelerator_ranges: TieredRanges | null
+  
+  // Metadatos
+  display_order: number
+  is_active: boolean
+  notes: string | null
+  
+  // Joins
+  item_type?: ItemTypeInfo | null
+  preset?: PresetInfo | null
+  mapped_tipos_venta: TipoVentaMapping[]
+  multipliers: ItemMultiplier[]
+  pxq_scales?: PxQScale[]
+}
+
+// ============================================================================
+// RESULTADO DE SIMULACIÓN ACTUALIZADO (v2.0)
+// ============================================================================
+
+/**
+ * Detalle de partida en resultado (v2.0)
+ */
+export interface ItemDetailV2 {
+  // Identificación
+  id: string
+  name: string
+  itemTypeCode: string | null
+  presetCode: string | null
+  customName: string | null
+  category: ItemCategory
+  
+  // Tipo de cálculo
+  calculationType: CalculationType
+  contributionType: ContributionType
+  measurementType: MeasurementType
+  variableSource: VariableSource
+  
+  // Cuotas
+  quota: number | null
+  effectiveQuota: number | null       // Con prorrateo
+  weight: number | null
+  variableAmount: number
+  
+  // Ventas y cumplimiento
+  sales: number                       // Valor medido (unidades, promedio, etc.)
+  salesRaw: number                    // Unidades brutas siempre
+  fulfillment: number                 // % cumplimiento
+  effectiveFulfillment: number        // % después de topes
+  meetsMinimum: boolean
+  minFulfillment: number
+  
+  // Multiplicadores (v2.0 - reemplaza lockUnlocked/lockPending)
+  multipliersEvaluated: MultiplierEvaluation[]
+  combinedMultiplierFactor: number    // Producto de todos los factores
+  hasBlockingMultiplier: boolean      // Si algún factor = 0
+  
+  // Sobrecumplimiento (v2.0)
+  overcomplianceResult: OvercomplianceResult | null
+  
+  // Restricciones (legacy, migrar a multipliers)
+  restrictionApplied: boolean
+  restrictionDetail: string | null
+  
+  // Comisión
+  baseCommission: number              // Antes de multiplicadores
+  adjustedCommission: number          // Después de multiplicadores
+  bonusFromOvercompliance: number     // Bono por sobrecumplimiento
+  commission: number                  // Total final
+  
+  // Mapeo
+  tiposVentaMapeados: TipoVentaMapping[]
+}
+
+/**
+ * Resultado principal de simulación (v2.0)
+ */
+export interface SimulationResultV2 {
+  // Componentes de ingreso
+  fixedSalary: number
+  variableCommission: number          // Partidas PONDERADA
+  acceleratorAdjustment: number       // Partidas ACELERADOR (±%)
+  pxqCommission: number               // Partidas PXQ_INDEPENDIENTE
+  bonusCommission: number             // Partidas BONO
+  additionalCommission: number        // Partidas con variable_source = FIXED_EXTRA
+  overcomplianceBonus: number         // Total bonos por sobrecumplimiento
+  
+  // Totales
+  totalGross: number
+  predictedPenalties: number
+  totalNet: number
+  
+  // Cumplimiento global
+  globalFulfillment: number
+  globalSSQuota: number
+  globalSSSales: number
+  
+  // Detalles
+  details: ItemDetailV2[]
+  
+  // Info de cuota (v1.2)
+  quotaInfo?: QuotaInfo
+  
+  // Metadatos de cálculo (v2.0)
+  calculationMetadata: {
+    schemeType: 'asesor' | 'supervisor' | 'encargado'
+    acceleratorBase: 'VARIABLE_TEORICO' | 'VARIABLE_CALCULADO'
+    totalMultiplierFactors: number
+    hasConversionTable: boolean
+    calculationSteps: string[]        // Log de pasos para debugging
   }
-  
-  return result;
-}
-```
-
-**Nota v2.1:** El mapeo flexible permite que:
-- Un tipo de venta (ej: PACK_OSS) sume a múltiples partidas (OSS como línea, PACK_SS como equipo)
-- Las partidas agrupen múltiples tipos de venta (ej: OSS = OSS_BASE + OSS_CAPTURA + PACK_OSS.línea)
-
-### 6.5 Obtener Ventas Declarativas (BU)
-
-```typescript
-const { data: ventasBU } = await supabase
-  .from('ventas')
-  .select('*')
-  .eq('usuario_id', userId)
-  .eq('estado', 'aprobada')
-  .gte('fecha_venta', startOfMonth)
-  .lte('fecha_venta', endOfMonth);
-```
-
-### 6.6 Llamar Función de Simulación
-
-```typescript
-// Usar función de PostgreSQL
-const { data: result } = await supabase
-  .rpc('simulate_hc_commission', {
-    p_scheme_id: schemeId,
-    p_sales_data: salesData,      // JSONB: {"OSS": 24, "OPP": 4, ...}
-    p_plan_breakdown: planData,    // JSONB opcional
-    p_user_id: userId              // Para predicción penalidades
-  });
-
-// Resultado
-interface SimulationResult {
-  fixed_salary: number;
-  variable_commission: number;
-  pxq_commission: number;
-  bonus_commission: number;
-  total_gross: number;
-  predicted_penalties: number;
-  total_net: number;
-  global_fulfillment: number;
-  details: ItemDetail[];
-}
-```
-
-### 6.7 Obtener Historial de Penalidades
-
-```typescript
-const { data: penalties } = await supabase
-  .rpc('predict_hc_penalties', {
-    p_user_id: userId,
-    p_months_lookback: 6
-  });
-
-// Resultado
-interface PenaltyPrediction {
-  penalty_code: string;
-  penalty_name: string;
-  predicted_quantity: number;
-  predicted_amount: number;
-  confidence: number;  // 0.00 - 1.00
 }
 ```
 
 ---
 
-## 7. COMPONENTES TÉCNICOS
+## 4. MOTOR DE CÁLCULO UNIVERSAL (6 PASOS)
 
-### 7.1 Estructura de Archivos
-
-```
-app/
-└── (dashboard)/
-    └── comisiones/
-        └── simulador/
-            └── page.tsx                    # Simulador Gerencia
-    └── mi-comision/
-        └── page.tsx                        # Simulador HC Personal
-
-components/
-└── simulador/
-    ├── SchemeSelector.tsx                  # Dropdown de esquemas
-    ├── ProfileSelector.tsx                 # Selector de perfiles
-    ├── SalesInputTable.tsx                 # Tabla editable de ventas
-    ├── SimulationResult.tsx                # Resultado principal
-    ├── ResultBreakdown.tsx                 # Desglose por partida
-    ├── ScenarioComparison.tsx              # Comparación side-by-side
-    ├── HCSelector.tsx                      # Modal selección de HC
-    ├── ProgressBar.tsx                     # Barra de progreso
-    ├── CostProjection.tsx                  # Proyección de costos
-    ├── WhatIfCalculator.tsx                # Mini calculadora "¿Qué pasa si?"
-    ├── QuotaProrationBadge.tsx             # Badge de prorrateo (v1.2)
-    └── EffectiveQuotaCard.tsx              # Card cuota efectiva (v1.2)
-
-lib/
-└── simulador/
-    ├── types.ts                            # Tipos TypeScript
-    ├── calculations.ts                     # Funciones de cálculo cliente
-    ├── profiles.ts                         # Generadores de perfiles
-    └── formatters.ts                       # Formateo de montos
-
-hooks/
-├── useSimulation.ts                        # Hook de simulación
-└── useHCQuota.ts                           # Hook de cuota (v1.2)
-```
-
-### 7.2 Tipos TypeScript (v1.2)
+### 4.1 Algoritmo
 
 ```typescript
-// types.ts
-
-// ========== CUOTAS (v1.2) ==========
-
-interface HCQuota {
-  id: string;
-  user_id: string;
-  store_quota_id: string;
-  store_id: string;
-  year: number;
-  month: number;
-  ss_quota: number;                    // Cuota nominal
-  quota_breakdown: QuotaBreakdown;     // Desglose por partida
-  start_date: string | null;           // Para prorrateo
-  proration_factor: number;            // 0-1
-  prorated_ss_quota: number | null;    // Cuota prorrateada
-  status: 'draft' | 'pending_approval' | 'approved' | 'archived';
-}
-
-interface QuotaBreakdown {
-  [partitionCode: string]: number;     // Ej: {"OSS": 31.5, "VR": 21}
-}
-
-interface HCEffectiveQuota {
-  ss_quota: number;
-  effective_quota: number;
-  proration_factor: number;
-  quota_breakdown: QuotaBreakdown;
-  start_date: string | null;
-  store_id: string;
-  store_name: string;
-  has_quota: boolean;                  // false si usa fallback del esquema
-}
-
-// ========== VENTAS ==========
-
-interface SalesData {
-  [partitionName: string]: number;     // Clave es el nombre de la partida
-}
-
-interface PlanBreakdown {
-  [planCode: string]: number;
-}
-
-// ========== SIMULACIÓN ==========
-
-interface SimulationInput {
-  schemeId: string;
-  salesData: SalesData;
-  planBreakdown?: PlanBreakdown;
-  userId?: string;
-  hcQuota?: HCEffectiveQuota;          // v1.2: Cuota del HC
-}
-
-interface SimulationResult {
-  fixedSalary: number;
-  variableCommission: number;
-  pxqCommission: number;
-  bonusCommission: number;
-  totalGross: number;
-  predictedPenalties: number;
-  totalNet: number;
-  globalFulfillment: number;
-  details: ItemDetail[];
-  quotaInfo?: {                        // v1.2: Info de cuota usada
-    source: 'hc_quotas' | 'scheme_fallback';
-    proration_factor: number;
-    effective_quota: number;
-  };
-}
-
-// ========== MAPEO DE PARTIDAS ==========
-
-interface TipoVentaMapping {
-  tipoVentaId: string;
-  codigo: string;
-  nombre: string;
-  categoria: string;
-  cuentaLinea: boolean;
-  cuentaEquipo: boolean;
-}
-
-interface ItemDetail {
-  id: string;
-  name: string;
-  itemTypeCode: string | null;
-  presetCode: string | null;
-  customName: string | null;
-  category: 'principal' | 'adicional' | 'pxq' | 'bono';
-  calculationType: 'percentage' | 'pxq' | 'binary';
-  tiposVentaMapeados: TipoVentaMapping[];
-  quota: number | null;                 // Meta nominal
-  effectiveQuota: number | null;        // v1.2: Meta con prorrateo
-  sales: number;
-  fulfillment: number;
-  effectiveFulfillment: number;
-  meetsMinimum: boolean;
-  minFulfillment: number;
-  lockUnlocked: boolean;
-  lockPending: string[];
-  restrictionApplied: boolean;
-  restrictionDetail: string | null;
-  effectiveSales: number;
-  commission: number;
-}
-
-// ========== ESCENARIOS ==========
-
-interface Scenario {
-  id: string;
-  name: string;
-  schemeId: string;
-  schemeName: string;
-  salesData: SalesData;
-  result: SimulationResult;
-}
-
-type SalesProfile = 'average' | 'top20' | 'new' | 'quota100' | 'custom';
-
-// ========== PARTIDAS DEL ESQUEMA ==========
-
-interface SchemeItemWithMapping {
-  id: string;
-  scheme_id: string;
-  item_type_id: string | null;
-  preset_id: string | null;
-  custom_name: string | null;
-  quota: number | null;                 // Meta del esquema (fallback)
-  weight: number | null;
-  variable_amount: number;
-  min_fulfillment: number | null;
-  has_cap: boolean;
-  is_active: boolean;
-  display_order: number;
-  item_type?: { code: string; name: string; category: string } | null;
-  preset?: { code: string; name: string; default_category: string } | null;
-  mapped_tipos_venta: TipoVentaMapping[];
-}
-```
-
-### 7.3 Hook de Cuota HC (v1.2 NUEVO)
-
-```typescript
-// hooks/useHCQuota.ts
-
-import { useState, useEffect, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { HCEffectiveQuota } from '@/lib/simulador/types';
-
-interface UseHCQuotaOptions {
-  userId: string;
-  year: number;
-  month: number;
-  enabled?: boolean;
-}
-
-export function useHCQuota({ userId, year, month, enabled = true }: UseHCQuotaOptions) {
-  const [quota, setQuota] = useState<HCEffectiveQuota | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+/**
+ * Motor de cálculo de comisiones v2.0
+ * Sigue el algoritmo universal de 6 pasos documentado en EDITOR_ESQUEMAS_SPEC_v3.3.md
+ */
+function calculateCommissionV2(
+  scheme: SchemeForSimulationV2,
+  salesData: SalesData,
+  hcQuota?: HCEffectiveQuota
+): SimulationResultV2 {
+  const steps: string[] = []
+  const details: ItemDetailV2[] = []
   
-  const supabase = createClient();
-
-  const fetchQuota = useCallback(async () => {
-    if (!userId || !enabled) return;
-    
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const { data, error: rpcError } = await supabase
-        .rpc('get_hc_effective_quota', {
-          p_user_id: userId,
-          p_year: year,
-          p_month: month
-        });
-      
-      if (rpcError) throw rpcError;
-      
-      if (data) {
-        setQuota({
-          ss_quota: data.ss_quota,
-          effective_quota: data.effective_quota,
-          proration_factor: data.proration_factor,
-          quota_breakdown: data.quota_breakdown,
-          start_date: data.start_date,
-          store_id: data.store_id,
-          store_name: data.store_name,
-          has_quota: true
-        });
-      } else {
-        // No hay cuota asignada
-        setQuota({
-          ss_quota: 0,
-          effective_quota: 0,
-          proration_factor: 1,
-          quota_breakdown: {},
-          start_date: null,
-          store_id: '',
-          store_name: '',
-          has_quota: false
-        });
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error obteniendo cuota');
-      setQuota(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [supabase, userId, year, month, enabled]);
-
-  useEffect(() => {
-    fetchQuota();
-  }, [fetchQuota]);
-
-  return { quota, loading, error, refetch: fetchQuota };
-}
-```
-
-### 7.4 Hook de Simulación (v1.2 actualizado)
-
-```typescript
-// hooks/useSimulation.ts
-
-import { useState, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { SimulationInput, SimulationResult, HCEffectiveQuota } from '@/lib/simulador/types';
-
-export function useSimulation() {
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<SimulationResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Factor de prorrateo
+  const prorationFactor = hcQuota?.proration_factor ?? 1
+  steps.push(`Prorrateo: ${(prorationFactor * 100).toFixed(1)}%`)
   
-  const supabase = createClient();
-
-  const simulate = useCallback(async (input: SimulationInput) => {
-    setLoading(true);
-    setError(null);
+  // Acumuladores por tipo de contribución
+  let variableCommission = 0      // PONDERADA
+  let acceleratorAdjustment = 0   // ACELERADOR
+  let pxqCommission = 0           // PXQ_INDEPENDIENTE
+  let bonusCommission = 0         // BONO
+  let additionalCommission = 0    // variable_source = FIXED_EXTRA
+  let overcomplianceBonus = 0     // Sobrecumplimiento total
+  
+  // Totales para cumplimiento global
+  let totalSSQuota = 0
+  let totalSSSales = 0
+  
+  // =========================================================================
+  // PASO 1: Medir logro por partida
+  // =========================================================================
+  steps.push('Paso 1: Medir logro por partida')
+  
+  const itemMeasurements: Map<string, {
+    item: SchemeItemV2
+    measuredValue: number
+    rawUnits: number
+    quota: number
+    effectiveQuota: number
+  }> = new Map()
+  
+  for (const item of scheme.items) {
+    if (!item.is_active) continue
     
-    try {
-      const { data, error: rpcError } = await supabase
-        .rpc('simulate_hc_commission', {
-          p_scheme_id: input.schemeId,
-          p_sales_data: input.salesData,
-          p_plan_breakdown: input.planBreakdown || null,
-          p_user_id: input.userId || null
-        });
-      
-      if (rpcError) throw rpcError;
-      
-      // v1.2: Agregar info de cuota al resultado
-      const resultWithQuota = transformResult(data);
-      if (input.hcQuota) {
-        resultWithQuota.quotaInfo = {
-          source: input.hcQuota.has_quota ? 'hc_quotas' : 'scheme_fallback',
-          proration_factor: input.hcQuota.proration_factor,
-          effective_quota: input.hcQuota.effective_quota
-        };
-      }
-      
-      setResult(resultWithQuota);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error en simulación');
-    } finally {
-      setLoading(false);
-    }
-  }, [supabase]);
-
-  const reset = useCallback(() => {
-    setResult(null);
-    setError(null);
-  }, []);
-
-  return { simulate, result, loading, error, reset };
-}
-
-function transformResult(data: any): SimulationResult {
-  return {
-    fixedSalary: data.fixed_salary,
-    variableCommission: data.variable_commission,
-    pxqCommission: data.pxq_commission,
-    bonusCommission: data.bonus_commission,
-    totalGross: data.total_gross,
-    predictedPenalties: data.predicted_penalties,
-    totalNet: data.total_net,
-    globalFulfillment: data.global_fulfillment,
-    details: data.details || []
-  };
-}
-```
-
-### 7.5 Generador de Perfiles (v1.2 actualizado)
-
-```typescript
-// lib/simulador/profiles.ts
-
-import { SchemeItemWithMapping, SalesData, HCEffectiveQuota, SalesProfile } from './types';
-
-export function generateSalesProfile(
-  schemeItems: SchemeItemWithMapping[],
-  profile: SalesProfile,
-  hcQuota?: HCEffectiveQuota      // v1.2: Usar cuota del HC si disponible
-): SalesData {
-  const multipliers: Record<SalesProfile, number> = {
-    average: 0.75,
-    top20: 1.15,
-    new: 0.50,
-    quota100: 1.00,
-    custom: 1.00
-  };
-
-  const multiplier = multipliers[profile];
-  const salesData: SalesData = {};
-
-  for (const item of schemeItems) {
-    const itemName = getEffectiveItemName(item);
+    const itemName = getEffectiveItemName(item)
+    const rawUnits = salesData[itemName] || 0
     
-    // v1.2: Priorizar cuota de hc_quotas sobre la del esquema
-    let quota: number;
+    // Determinar cuota (de hc_quotas o del esquema)
+    let quota = item.quota || 0
     if (hcQuota?.has_quota && hcQuota.quota_breakdown[itemName]) {
-      // Usar cuota del módulo Cuotas (ya incluye prorrateo en effective_quota)
-      quota = hcQuota.quota_breakdown[itemName] * hcQuota.proration_factor;
-    } else if (item.quota) {
-      // Fallback: usar cuota del esquema
-      quota = item.quota;
-    } else {
-      continue; // Sin cuota definida
+      quota = hcQuota.quota_breakdown[itemName]
+    }
+    const effectiveQuota = Math.round(quota * prorationFactor * 10) / 10
+    
+    // Medir según measurement_type
+    let measuredValue = rawUnits // Default: UNIT_COUNT
+    
+    if (item.measurement_type === 'AVERAGE_VALUE' && item.measurement_config) {
+      // TODO: Calcular promedio desde datos detallados
+      measuredValue = rawUnits // Placeholder
+    } else if (item.measurement_type === 'TOTAL_VALUE' && item.measurement_config) {
+      // TODO: Calcular suma desde datos detallados
+      measuredValue = rawUnits // Placeholder
+    } else if (item.measurement_type === 'RATE' && item.measurement_config) {
+      // TODO: Calcular ratio desde datos detallados
+      measuredValue = rawUnits // Placeholder
     }
     
-    salesData[itemName] = Math.round(quota * multiplier);
+    itemMeasurements.set(item.id, {
+      item,
+      measuredValue,
+      rawUnits,
+      quota,
+      effectiveQuota
+    })
+    
+    // Acumular para cumplimiento global SS (solo partidas principales)
+    if (getEffectiveCategory(item) === 'principal') {
+      totalSSQuota += effectiveQuota
+      totalSSSales += measuredValue
+    }
   }
-
-  return salesData;
-}
-
-// Helper para obtener el nombre efectivo de una partida (v2.1)
-export function getEffectiveItemName(item: SchemeItemWithMapping): string {
-  return item.custom_name 
-    || item.item_type?.code 
-    || item.preset?.code 
-    || item.id;
-}
-
-// Helper para mostrar nombre legible en UI (v2.1)
-export function getDisplayName(item: SchemeItemWithMapping): string {
-  return item.custom_name 
-    || item.item_type?.name 
-    || item.preset?.name 
-    || 'Partida sin nombre';
-}
-
-// Obtener los tipos de venta que suman a una partida (v2.1)
-export function getTiposVentaDescripcion(item: SchemeItemWithMapping): string {
-  if (!item.mapped_tipos_venta?.length) {
-    return 'Sin mapeo definido';
+  
+  // =========================================================================
+  // PASO 2: Calcular contribución según contribution_type
+  // =========================================================================
+  steps.push('Paso 2: Calcular contribución por tipo')
+  
+  const itemContributions: Map<string, {
+    fulfillment: number
+    effectiveFulfillment: number
+    meetsMinimum: boolean
+    baseCommission: number
+    contributionType: ContributionType
+  }> = new Map()
+  
+  for (const [itemId, measurement] of itemMeasurements) {
+    const { item, measuredValue, effectiveQuota } = measurement
+    
+    // Calcular cumplimiento según fulfillment_method
+    let fulfillment = 0
+    if (item.fulfillment_method === 'RATIO' && effectiveQuota > 0) {
+      fulfillment = measuredValue / effectiveQuota
+    } else if (item.fulfillment_method === 'ABSOLUTE_RANGES') {
+      // Valor directo busca en rangos, no hay "cumplimiento" tradicional
+      fulfillment = measuredValue / 100 // Normalizar para compatibilidad
+    }
+    
+    // Verificar mínimo
+    const minFulfillment = item.min_fulfillment || scheme.default_min_fulfillment || 0
+    const meetsMinimum = fulfillment >= minFulfillment
+    
+    // Calcular comisión base según contribution_type
+    let baseCommission = 0
+    
+    if (meetsMinimum) {
+      switch (item.contribution_type) {
+        case 'PONDERADA':
+          // Comisión = variable_amount × cumplimiento efectivo
+          let effectiveFulfillment = fulfillment
+          // Aplicar tope legacy si existe y no hay overcompliance_mode
+          if (item.overcompliance_mode === 'none' && fulfillment > 1) {
+            effectiveFulfillment = 1
+          }
+          baseCommission = item.variable_amount * effectiveFulfillment
+          break
+          
+        case 'PXQ_INDEPENDIENTE':
+          // Buscar escala aplicable
+          if (item.pxq_scales?.length) {
+            const scale = findApplicablePxQScale(item.pxq_scales, fulfillment * 100)
+            if (scale) {
+              baseCommission = measurement.rawUnits * scale.amount_per_unit
+            }
+          }
+          break
+          
+        case 'BONO':
+          // Todo o nada
+          baseCommission = fulfillment >= 1 ? item.variable_amount : 0
+          break
+          
+        case 'ACELERADOR':
+          // Se calcula después (en paso 4)
+          baseCommission = 0
+          break
+      }
+    }
+    
+    itemContributions.set(itemId, {
+      fulfillment,
+      effectiveFulfillment: fulfillment,
+      meetsMinimum,
+      baseCommission,
+      contributionType: item.contribution_type
+    })
   }
-  return item.mapped_tipos_venta
-    .map(m => m.codigo)
-    .join(', ');
-}
-
-// v1.2: Calcular meta efectiva con prorrateo
-export function calculateEffectiveQuota(
-  nominalQuota: number,
-  prorationFactor: number
-): number {
-  return Math.round(nominalQuota * prorationFactor * 10) / 10;
-}
-
-// v1.2: Formatear info de prorrateo para UI
-export function formatProrationInfo(
-  startDate: string | null,
-  prorationFactor: number
-): string {
-  if (!startDate || prorationFactor >= 1) {
-    return 'Mes completo';
+  
+  // =========================================================================
+  // PASO 3: Sumar ponderadas → variable base
+  // =========================================================================
+  steps.push('Paso 3: Sumar comisiones ponderadas')
+  
+  let variableBase = 0
+  for (const [itemId, contribution] of itemContributions) {
+    if (contribution.contributionType === 'PONDERADA') {
+      variableBase += contribution.baseCommission
+    }
   }
-  const date = new Date(startDate);
-  const day = date.getDate();
-  const pct = Math.round(prorationFactor * 100);
-  return `Desde día ${day} (${pct}% del mes)`;
+  
+  // =========================================================================
+  // PASO 4: Evaluar multiplicadores
+  // =========================================================================
+  steps.push('Paso 4: Evaluar multiplicadores')
+  
+  // Calcular cumplimiento global (necesario para GLOBAL_ATTAINMENT)
+  const globalFulfillment = totalSSQuota > 0 ? totalSSSales / totalSSQuota : 0
+  
+  const itemMultiplierResults: Map<string, {
+    evaluations: MultiplierEvaluation[]
+    combinedFactor: number
+    hasBlocking: boolean
+    adjustedCommission: number
+  }> = new Map()
+  
+  for (const [itemId, measurement] of itemMeasurements) {
+    const { item } = measurement
+    const contribution = itemContributions.get(itemId)!
+    
+    const evaluations: MultiplierEvaluation[] = []
+    let combinedFactor = 1
+    let hasBlocking = false
+    
+    for (const mult of item.multipliers) {
+      if (!mult.isActive) continue
+      
+      const evaluation = evaluateMultiplier(
+        mult,
+        measurement,
+        contribution,
+        itemMeasurements,
+        itemContributions,
+        globalFulfillment
+      )
+      
+      evaluations.push(evaluation)
+      combinedFactor *= evaluation.appliedFactor
+      
+      if (evaluation.appliedFactor === 0) {
+        hasBlocking = true
+      }
+    }
+    
+    // Aplicar factor combinado a la comisión base
+    const adjustedCommission = contribution.baseCommission * combinedFactor
+    
+    itemMultiplierResults.set(itemId, {
+      evaluations,
+      combinedFactor,
+      hasBlocking,
+      adjustedCommission
+    })
+  }
+  
+  // =========================================================================
+  // PASO 5: Calcular sobrecumplimiento
+  // =========================================================================
+  steps.push('Paso 5: Calcular sobrecumplimiento')
+  
+  const itemOvercompliance: Map<string, OvercomplianceResult | null> = new Map()
+  
+  for (const [itemId, measurement] of itemMeasurements) {
+    const { item, measuredValue, effectiveQuota } = measurement
+    const contribution = itemContributions.get(itemId)!
+    const multiplierResult = itemMultiplierResults.get(itemId)!
+    
+    let overcompResult: OvercomplianceResult | null = null
+    
+    // Solo si cumple mínimo y no está bloqueado
+    if (contribution.meetsMinimum && !multiplierResult.hasBlocking) {
+      overcompResult = calculateOvercompliance(
+        item,
+        contribution.fulfillment,
+        measuredValue,
+        effectiveQuota,
+        multiplierResult.adjustedCommission
+      )
+      
+      if (overcompResult && overcompResult.bonusCommission > 0) {
+        overcomplianceBonus += overcompResult.bonusCommission
+      }
+    }
+    
+    itemOvercompliance.set(itemId, overcompResult)
+  }
+  
+  // =========================================================================
+  // PASO 6: Calcular neto
+  // =========================================================================
+  steps.push('Paso 6: Calcular totales')
+  
+  // Construir detalles y acumular totales
+  for (const [itemId, measurement] of itemMeasurements) {
+    const { item, measuredValue, rawUnits, quota, effectiveQuota } = measurement
+    const contribution = itemContributions.get(itemId)!
+    const multiplierResult = itemMultiplierResults.get(itemId)!
+    const overcompResult = itemOvercompliance.get(itemId)
+    
+    const category = getEffectiveCategory(item)
+    const bonusFromOvercomp = overcompResult?.bonusCommission || 0
+    const finalCommission = multiplierResult.adjustedCommission + bonusFromOvercomp
+    
+    // Acumular por tipo
+    if (item.variable_source === 'FIXED_EXTRA') {
+      additionalCommission += finalCommission
+    } else {
+      switch (item.contribution_type) {
+        case 'PONDERADA':
+          variableCommission += finalCommission
+          break
+        case 'ACELERADOR':
+          // Los aceleradores ajustan el variable base
+          acceleratorAdjustment += finalCommission
+          break
+        case 'PXQ_INDEPENDIENTE':
+          pxqCommission += finalCommission
+          break
+        case 'BONO':
+          bonusCommission += finalCommission
+          break
+      }
+    }
+    
+    // Construir detalle
+    details.push({
+      id: itemId,
+      name: getDisplayName(item),
+      itemTypeCode: item.item_type?.code || null,
+      presetCode: item.preset?.code || null,
+      customName: item.custom_name,
+      category: category as ItemCategory,
+      calculationType: item.calculation_type,
+      contributionType: item.contribution_type,
+      measurementType: item.measurement_type,
+      variableSource: item.variable_source,
+      quota,
+      effectiveQuota,
+      weight: item.weight_percent,
+      variableAmount: item.variable_amount,
+      sales: measuredValue,
+      salesRaw: rawUnits,
+      fulfillment: contribution.fulfillment,
+      effectiveFulfillment: contribution.effectiveFulfillment,
+      meetsMinimum: contribution.meetsMinimum,
+      minFulfillment: item.min_fulfillment || scheme.default_min_fulfillment || 0,
+      multipliersEvaluated: multiplierResult.evaluations,
+      combinedMultiplierFactor: multiplierResult.combinedFactor,
+      hasBlockingMultiplier: multiplierResult.hasBlocking,
+      overcomplianceResult: overcompResult,
+      restrictionApplied: false,
+      restrictionDetail: null,
+      baseCommission: contribution.baseCommission,
+      adjustedCommission: multiplierResult.adjustedCommission,
+      bonusFromOvercompliance: bonusFromOvercomp,
+      commission: finalCommission,
+      tiposVentaMapeados: item.mapped_tipos_venta
+    })
+  }
+  
+  // Calcular totales
+  const totalGross = scheme.fixed_salary + 
+    variableCommission + 
+    acceleratorAdjustment + 
+    pxqCommission + 
+    bonusCommission + 
+    additionalCommission +
+    overcomplianceBonus
+  
+  return {
+    fixedSalary: scheme.fixed_salary,
+    variableCommission,
+    acceleratorAdjustment,
+    pxqCommission,
+    bonusCommission,
+    additionalCommission,
+    overcomplianceBonus,
+    totalGross,
+    predictedPenalties: 0, // Se calcula aparte
+    totalNet: totalGross,
+    globalFulfillment,
+    globalSSQuota: totalSSQuota,
+    globalSSSales: totalSSSales,
+    details,
+    calculationMetadata: {
+      schemeType: scheme.scheme_type,
+      acceleratorBase: scheme.accelerator_base || 'VARIABLE_TEORICO',
+      totalMultiplierFactors: details.reduce((sum, d) => sum + d.combinedMultiplierFactor, 0) / details.length,
+      hasConversionTable: scheme.conversion_table !== null,
+      calculationSteps: steps
+    }
+  }
 }
 ```
 
----
-
-## 8. ESTADOS DE UI Y FEEDBACK
-
-### 8.1 Estados de Carga
-
-- Cargando esquemas: Skeleton en dropdown
-- Cargando cuota HC: Skeleton en card de cuota (v1.2)
-- Calculando simulación: Spinner + "Calculando..."
-- Cargando datos de HC: Skeleton en tabla de ventas
-
-### 8.2 Mensajes de Feedback
+### 4.2 Función de Evaluación de Multiplicadores
 
 ```typescript
-// Éxito
-toast.success("Simulación completada");
-toast.success("Escenario agregado para comparar");
-
-// Información
-toast.info("Usando datos de INAR (confirmados)");
-toast.info("No hay datos de INAR, usando BU");
-toast.info("Cuota prorrateada aplicada");  // v1.2
-
-// Advertencia
-toast.warning("Algunas partidas no cumplen el mínimo");
-toast.warning("Hay candados sin liberar");
-toast.warning("Sin cuota asignada, usando valores del esquema");  // v1.2
-
-// Error
-toast.error("Error al calcular simulación");
-toast.error("No se encontró esquema vigente");
-toast.error("Error obteniendo cuota del HC");  // v1.2
+/**
+ * Evalúa un multiplicador y retorna el factor a aplicar
+ */
+function evaluateMultiplier(
+  mult: ItemMultiplier,
+  measurement: { item: SchemeItemV2; measuredValue: number; rawUnits: number },
+  contribution: { fulfillment: number; meetsMinimum: boolean },
+  allMeasurements: Map<string, { measuredValue: number; item: SchemeItemV2 }>,
+  allContributions: Map<string, { fulfillment: number }>,
+  globalFulfillment: number
+): MultiplierEvaluation {
+  let conditionMet = false
+  let appliedFactor = mult.factorIfNotMet
+  let currentValue = 0
+  let requiredValue = mult.thresholdValue
+  let description = mult.sourceDescription
+  
+  switch (mult.activationCriteria) {
+    case 'MIN_QUANTITY':
+      // Cantidad mínima vendida
+      currentValue = measurement.rawUnits
+      conditionMet = currentValue >= (mult.thresholdValue || 0)
+      description = `Mín ${mult.thresholdValue} unidades (actual: ${currentValue})`
+      break
+      
+    case 'OWN_ATTAINMENT':
+      // Cumplimiento de esta partida
+      currentValue = contribution.fulfillment * 100
+      conditionMet = currentValue >= (mult.thresholdValue || 0)
+      description = `Cumpl. ≥${mult.thresholdValue}% (actual: ${currentValue.toFixed(1)}%)`
+      break
+      
+    case 'OTHER_ATTAINMENT':
+      // Cumplimiento de otra partida
+      if (mult.sourceItemId) {
+        const otherContrib = allContributions.get(mult.sourceItemId)
+        if (otherContrib) {
+          currentValue = otherContrib.fulfillment * 100
+          conditionMet = currentValue >= (mult.thresholdValue || 0)
+          const otherItem = allMeasurements.get(mult.sourceItemId)
+          const otherName = otherItem ? getDisplayName(otherItem.item) : 'Otra partida'
+          description = `${otherName} ≥${mult.thresholdValue}% (actual: ${currentValue.toFixed(1)}%)`
+        }
+      }
+      break
+      
+    case 'GLOBAL_ATTAINMENT':
+      // Cumplimiento global SS
+      currentValue = globalFulfillment * 100
+      conditionMet = currentValue >= (mult.thresholdValue || 0)
+      description = `SS Global ≥${mult.thresholdValue}% (actual: ${currentValue.toFixed(1)}%)`
+      break
+      
+    case 'ATTAINMENT_RANGE':
+      // Buscar en rangos escalonados
+      if (mult.tieredRanges?.ranges) {
+        currentValue = contribution.fulfillment * 100
+        const range = mult.tieredRanges.ranges.find(r => 
+          currentValue >= r.min && (r.max === null || currentValue <= r.max)
+        )
+        if (range) {
+          conditionMet = true
+          appliedFactor = range.factor
+          description = `${range.label} (${currentValue.toFixed(1)}%)`
+        }
+      }
+      break
+      
+    case 'OPERATOR_ORIGIN':
+      // % de ventas de un operador específico
+      // TODO: Requiere datos detallados de operador por venta
+      conditionMet = false
+      description = `Origen ${mult.operatorCedente} (no implementado)`
+      break
+  }
+  
+  // Aplicar factor si cumple condición (excepto TIERED que ya lo asignó)
+  if (mult.activationCriteria !== 'ATTAINMENT_RANGE') {
+    appliedFactor = conditionMet ? mult.factorIfMet : mult.factorIfNotMet
+  }
+  
+  return {
+    multiplier: mult,
+    conditionMet,
+    appliedFactor,
+    currentValue,
+    requiredValue,
+    description
+  }
+}
 ```
 
-### 8.3 Indicadores Visuales
-
-**Cumplimiento:**
-- 0-49%: Rojo (no comisiona)
-- 50-79%: Amarillo (comisiona parcial)
-- 80-99%: Verde claro (bueno)
-- 100%+: Verde oscuro (excelente)
-
-**Candados:**
-- 🔒 Cerrado (rojo)
-- 🔓 Liberado (verde)
-
-**Restricciones aplicadas:**
-- ⚠️ Badge amarillo indicando ajuste
-
-**Prorrateo (v1.2):**
-- 📅 Badge azul indicando días trabajados
-- Factor mostrado como porcentaje
-
----
-
-## 9. NAVEGACIÓN Y UX
-
-### 9.1 Menú
-
-```
-📊 Comisiones
-├── 📋 Esquemas
-├── 📥 Importar
-├── ⚡ Simulador          ← Simulador Gerencia
-└── ⚠️ Penalidades
-
-📈 Cuotas                  ← v1.2: Módulo de Cuotas
-├── 📊 Por Tienda
-└── 👥 Por HC
-
-👤 Mi Cuenta
-├── 💰 Mi Comisión        ← Simulador HC Personal
-└── ...
-```
-
-### 9.2 Accesos Directos
-
-- Desde lista de esquemas: Botón "⚡ Simular" abre simulador con ese esquema
-- Desde detalle de esquema: Botón "⚡ Simular" 
-- Dashboard HC: Widget "Mi Comisión" con proyección rápida
-- Desde cuotas HC: Link "Ver simulación" (v1.2)
-
-### 9.3 Responsive
-
-- Desktop: Layout completo con tabla de ventas y resultados side-by-side
-- Tablet: Tabla de ventas arriba, resultados abajo
-- Mobile: Formulario colapsable, solo resultado visible por defecto
-
----
-
-## 10. PRÓXIMOS PASOS PARA CLAUDE CODE
-
-### Orden recomendado de desarrollo:
-
-1. **Tipos y hooks base** (`lib/simulador/`, `hooks/`)
-   - Incluir `useHCQuota` (v1.2)
-2. **Componente SalesInputTable** (tabla editable)
-3. **Componente SimulationResult** (resultado principal)
-4. **Componente QuotaProrationBadge** (v1.2)
-5. **Página Simulador Gerencia** (integración)
-6. **Componente ResultBreakdown** (desglose)
-7. **Componente ScenarioComparison** (comparación)
-8. **Modal HCSelector** (selección de HC con cuota)
-9. **Página Mi Comisión** (simulador HC con prorrateo)
-10. **Componente WhatIfCalculator** (mini calculadora)
-11. **Componente CostProjection** (proyección costos)
-
-### Dependencias adicionales:
-
-```bash
-npm install recharts  # Para gráficos de progreso
-```
-
----
-
-## 11. VERIFICACIÓN DE INTEGRACIÓN
-
-### 11.1 Tablas Referenciadas
-
-| Módulo | Tablas | Uso en Simulador |
-|--------|--------|------------------|
-| Core | `usuarios` | Datos del HC (nombre_completo, codigo_asesor) |
-| Core | `tiendas` | Nombre de tienda del HC |
-| Cuotas | `hc_quotas` | **Cuota efectiva del HC** (v1.2) |
-| Cuotas | `store_quotas` | Referencia de cuota de tienda |
-| Comisiones | `commission_schemes` | Esquema con fórmulas |
-| Comisiones | `commission_scheme_items` | Partidas y variables |
-| Comisiones | `commission_item_ventas` | Mapeo a tipos de venta |
-| INAR | `lineas_inar` | Ventas confirmadas |
-| Operaciones | `ventas` | Ventas declarativas (BU) |
-| Penalidades | `hc_penalties` | Histórico para predicción |
-
-### 11.2 Funciones RPC Utilizadas
-
-| Función | Módulo | Propósito |
-|---------|--------|-----------|
-| `get_hc_effective_quota` | Cuotas | Obtener cuota con prorrateo |
-| `simulate_hc_commission` | Comisiones | Calcular comisión |
-| `predict_hc_penalties` | Penalidades | Predecir penalidades |
-| `get_sales_profile` | Comisiones | Generar perfil de ventas |
-| `compare_commission_scenarios` | Comisiones | Comparar dos esquemas |
-
-### 11.3 Campos de Usuario (DATA_DICTIONARY v2.3)
+### 4.3 Función de Sobrecumplimiento
 
 ```typescript
-// Campos correctos de la tabla usuarios:
-interface Usuario {
-  id: string;              // UUID
-  codigo_asesor: string;   // "PBD_AGARCIA"
-  dni: string;
-  nombre_completo: string; // "Ana García López"
-  email: string | null;
-  rol: string;             // "ASESOR", "SUPERVISOR", etc.
-  zona: string | null;     // "NORTE", "SUR"
-  activo: boolean;
+/**
+ * Calcula el bono por sobrecumplimiento
+ */
+function calculateOvercompliance(
+  item: SchemeItemV2,
+  fulfillment: number,
+  sales: number,
+  quota: number,
+  baseCommission: number
+): OvercomplianceResult | null {
+  // Solo aplica si hay sobrecumplimiento
+  if (fulfillment <= 1 || item.overcompliance_mode === 'none') {
+    return null
+  }
+  
+  const unitsOverQuota = sales - quota
+  
+  switch (item.overcompliance_mode) {
+    case 'proportional': {
+      // Comisión continúa proporcional
+      let bonusUnits = unitsOverQuota
+      let bonusCommission = 0
+      
+      // Aplicar tope de unidades si existe
+      if (item.cap_units && bonusUnits > item.cap_units) {
+        bonusUnits = item.cap_units
+      }
+      
+      // Calcular comisión adicional proporcional
+      // Proporción = (unitsOverQuota / quota) * variableAmount
+      if (quota > 0) {
+        bonusCommission = (bonusUnits / quota) * item.variable_amount
+      }
+      
+      // Aplicar tope de monto si existe
+      if (item.overcap_max_amount && bonusCommission > item.overcap_max_amount) {
+        bonusCommission = item.overcap_max_amount
+      }
+      
+      return {
+        mode: 'proportional',
+        baseCommission,
+        bonusCommission,
+        bonusUnits: unitsOverQuota,
+        cappedUnits: bonusUnits,
+        cappedAmount: bonusCommission,
+        totalCommission: baseCommission + bonusCommission
+      }
+    }
+    
+    case 'pxq_bonus': {
+      // Pago por unidad extra
+      if (!item.pxq_bonus_amount) return null
+      
+      let bonusUnits = unitsOverQuota
+      
+      // Aplicar tope de unidades
+      if (item.overcap_max_units && bonusUnits > item.overcap_max_units) {
+        bonusUnits = item.overcap_max_units
+      }
+      
+      let bonusCommission = bonusUnits * item.pxq_bonus_amount
+      
+      // Aplicar tope de monto
+      if (item.overcap_max_amount && bonusCommission > item.overcap_max_amount) {
+        bonusCommission = item.overcap_max_amount
+      }
+      
+      return {
+        mode: 'pxq_bonus',
+        baseCommission,
+        bonusCommission,
+        bonusUnits: unitsOverQuota,
+        cappedUnits: bonusUnits,
+        cappedAmount: bonusCommission,
+        totalCommission: baseCommission + bonusCommission
+      }
+    }
+    
+    default:
+      return null
+  }
 }
-
-// ⚠️ NO existen estos campos:
-// - codigo_entel (usar codigo_asesor)
-// - nombres (usar nombre_completo)
-// - apellidos (usar nombre_completo)
 ```
 
 ---
 
-**Este documento es la guía completa para implementar el Simulador de Ingresos. Adjuntar a Claude Code junto con GRIDRETAIL_QUICK_REFERENCE.md, DATA_DICTIONARY.md y MODULO_PENALIDADES_SPEC_v1.1.md**
+## 5. CAMBIOS EN HOOKS
+
+### 5.1 useSchemeData - Query Actualizada
+
+```typescript
+/**
+ * Carga un esquema completo con partidas y multiplicadores (v2.0)
+ */
+const loadSchemeWithItems = useCallback(async (schemeId: string) => {
+  setLoading(true)
+  setError(null)
+
+  try {
+    // Cargar esquema con nuevos campos v3.4
+    const { data: schemeData, error: schemeError } = await supabase
+      .from('commission_schemes')
+      .select(`
+        *,
+        accelerator_base,
+        conversion_table,
+        global_range_method,
+        accelerator_config
+      `)
+      .eq('id', schemeId)
+      .single()
+
+    if (schemeError) throw schemeError
+
+    // Cargar partidas con todos los campos v3.4
+    const { data: itemsData, error: itemsError } = await supabase
+      .from('commission_scheme_items')
+      .select(`
+        *,
+        contribution_type,
+        range_source,
+        uses_conversion_table,
+        accelerator_ranges,
+        overcompliance_mode,
+        cap_units,
+        pxq_bonus_amount,
+        overcap_max_units,
+        overcap_max_amount,
+        measurement_type,
+        fulfillment_method,
+        measurement_config,
+        variable_source,
+        item_type:commission_item_types(code, name, category, calculation_type),
+        preset:partition_presets(code, name, short_name, default_category, default_calculation_type),
+        pxq_scales:commission_pxq_scales(*)
+      `)
+      .eq('scheme_id', schemeId)
+      .eq('is_active', true)
+      .order('display_order')
+
+    if (itemsError) throw itemsError
+
+    // Cargar MULTIPLICADORES (v2.0 - reemplaza locks)
+    const itemIds = itemsData?.map(i => i.id) || []
+    let multipliersMap: Record<string, ItemMultiplier[]> = {}
+
+    if (itemIds.length > 0) {
+      const { data: multipliersData } = await supabase
+        .from('commission_item_multipliers')
+        .select('*')
+        .in('item_id', itemIds)
+        .eq('is_active', true)
+        .order('display_order')
+
+      // Agrupar por item_id y transformar
+      multipliersMap = (multipliersData || []).reduce((acc, m) => {
+        const itemId = m.item_id
+        if (!acc[itemId]) acc[itemId] = []
+        acc[itemId].push({
+          id: m.id,
+          itemId: m.item_id,
+          multiplierType: m.multiplier_type,
+          activationCriteria: m.activation_criteria,
+          sourceDescription: m.source_description,
+          sourceItemId: m.source_item_id,
+          thresholdValue: m.threshold_value,
+          factorIfMet: m.factor_if_met,
+          factorIfNotMet: m.factor_if_not_met,
+          tieredRanges: m.tiered_ranges,
+          operatorCedente: m.operator_cedente,
+          measurementType: m.measurement_type || 'UNIT_COUNT',
+          measurementConfig: m.measurement_config,
+          isActive: m.is_active,
+          displayOrder: m.display_order
+        })
+        return acc
+      }, {} as Record<string, ItemMultiplier[]>)
+    }
+
+    // Cargar mapeos de tipos de venta (igual que antes)
+    let ventasMappings: Record<string, TipoVentaMapping[]> = {}
+    // ... (código existente)
+
+    // Mapear partidas con multiplicadores
+    const itemsWithMapping: SchemeItemV2[] = (itemsData || []).map(item => ({
+      ...item,
+      mapped_tipos_venta: ventasMappings[item.id] || [],
+      multipliers: multipliersMap[item.id] || []
+    }))
+
+    const scheme: SchemeForSimulationV2 = {
+      ...schemeData,
+      items: itemsWithMapping
+    }
+
+    setSelectedScheme(scheme)
+    return scheme
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Error cargando esquema'
+    setError(message)
+    return null
+  } finally {
+    setLoading(false)
+  }
+}, [supabase])
+```
+
+### 5.2 useSimulation - Cálculo Local Actualizado
+
+```typescript
+/**
+ * Simula usando cálculo local v2.0
+ */
+const simulateLocal = useCallback(async (
+  scheme: SchemeForSimulationV2,
+  salesData: SalesData,
+  hcQuota?: HCEffectiveQuota
+): Promise<SimulationResultV2> => {
+  setLoading(true)
+  setError(null)
+
+  try {
+    // Usar el nuevo motor de cálculo v2.0
+    const result = calculateCommissionV2(scheme, salesData, hcQuota)
+    setResult(result)
+    return result
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Error en cálculo local'
+    setError(message)
+    throw err
+  } finally {
+    setLoading(false)
+  }
+}, [])
+```
+
+---
+
+## 6. CAMBIOS EN COMPONENTES UI
+
+### 6.1 ResultBreakdown - Multiplicadores
+
+```tsx
+// Sección de multiplicadores (reemplaza candados)
+{detail.multipliersEvaluated.length > 0 && (
+  <div className="mt-2 space-y-1">
+    <p className="text-xs font-medium text-muted-foreground">Multiplicadores:</p>
+    {detail.multipliersEvaluated.map((eval, idx) => (
+      <div key={idx} className="flex items-center gap-2 text-xs">
+        {eval.conditionMet ? (
+          <CheckCircle className="h-3 w-3 text-green-500" />
+        ) : (
+          <XCircle className="h-3 w-3 text-red-500" />
+        )}
+        <span className={eval.conditionMet ? 'text-green-700' : 'text-red-700'}>
+          {eval.description}
+        </span>
+        <Badge variant="outline" className="text-xs">
+          ×{eval.appliedFactor.toFixed(2)}
+        </Badge>
+      </div>
+    ))}
+    {detail.combinedMultiplierFactor !== 1 && (
+      <div className="flex items-center gap-2 text-xs font-medium mt-1 pt-1 border-t">
+        <span>Factor combinado:</span>
+        <Badge variant={detail.hasBlockingMultiplier ? 'destructive' : 'secondary'}>
+          ×{detail.combinedMultiplierFactor.toFixed(2)}
+        </Badge>
+      </div>
+    )}
+  </div>
+)}
+```
+
+### 6.2 ResultBreakdown - Sobrecumplimiento
+
+```tsx
+// Sección de sobrecumplimiento
+{detail.overcomplianceResult && detail.overcomplianceResult.bonusCommission > 0 && (
+  <div className="mt-2 p-2 bg-emerald-50 rounded-md">
+    <div className="flex items-center gap-2 text-xs text-emerald-700">
+      <TrendingUp className="h-3 w-3" />
+      <span className="font-medium">Sobrecumplimiento</span>
+      <Badge variant="outline" className="bg-emerald-100">
+        {detail.overcomplianceResult.mode === 'proportional' ? 'Proporcional' : 'PxQ Bonus'}
+      </Badge>
+    </div>
+    <div className="mt-1 text-xs text-emerald-600">
+      <p>Unidades sobre meta: {detail.overcomplianceResult.bonusUnits.toFixed(0)}</p>
+      {detail.overcomplianceResult.cappedUnits !== detail.overcomplianceResult.bonusUnits && (
+        <p>Unidades con tope: {detail.overcomplianceResult.cappedUnits?.toFixed(0)}</p>
+      )}
+      <p className="font-medium">
+        Bono: {formatCurrency(detail.overcomplianceResult.bonusCommission)}
+      </p>
+    </div>
+  </div>
+)}
+```
+
+### 6.3 SimulationResult - Nuevo Desglose
+
+```tsx
+// Desglose actualizado con nuevos conceptos
+<div className="grid grid-cols-2 gap-4">
+  <ResultRow label="Sueldo Fijo" value={result.fixedSalary} />
+  <ResultRow label="Comisión Variable" value={result.variableCommission} />
+  {result.acceleratorAdjustment !== 0 && (
+    <ResultRow 
+      label="Ajuste Aceleradores" 
+      value={result.acceleratorAdjustment}
+      highlight={result.acceleratorAdjustment > 0 ? 'positive' : 'negative'}
+    />
+  )}
+  <ResultRow label="Comisión PxQ" value={result.pxqCommission} />
+  <ResultRow label="Bonos" value={result.bonusCommission} />
+  {result.additionalCommission > 0 && (
+    <ResultRow label="Adicionales" value={result.additionalCommission} />
+  )}
+  {result.overcomplianceBonus > 0 && (
+    <ResultRow 
+      label="Bono Sobrecumplimiento" 
+      value={result.overcomplianceBonus}
+      highlight="positive"
+      icon={<TrendingUp className="h-4 w-4" />}
+    />
+  )}
+  <Separator className="col-span-2" />
+  <ResultRow label="Total Bruto" value={result.totalGross} bold />
+  {result.predictedPenalties > 0 && (
+    <ResultRow 
+      label="Penalidades (pred.)" 
+      value={-result.predictedPenalties}
+      highlight="negative"
+    />
+  )}
+  <ResultRow label="Total Neto" value={result.totalNet} bold primary />
+</div>
+```
+
+---
+
+## 7. MIGRACIÓN Y COMPATIBILIDAD
+
+### 7.1 Estrategia de Migración
+
+1. **Fase 1:** Actualizar tipos TypeScript (`types.ts`)
+2. **Fase 2:** Actualizar hooks para cargar nuevos campos
+3. **Fase 3:** Implementar motor de cálculo v2.0
+4. **Fase 4:** Actualizar componentes UI
+5. **Fase 5:** Pruebas con datos reales
+
+### 7.2 Compatibilidad con Datos Legacy
+
+```typescript
+/**
+ * Normaliza un item legacy (sin campos v3.4) a SchemeItemV2
+ */
+function normalizeToV2(item: SchemeItemWithMapping): SchemeItemV2 {
+  return {
+    ...item,
+    // Defaults para campos v3.x si no existen
+    contribution_type: item.contribution_type || 'PONDERADA',
+    range_source: item.range_source || 'CUOTA_PROPIA',
+    uses_conversion_table: item.uses_conversion_table || false,
+    accelerator_ranges: item.accelerator_ranges || null,
+    overcompliance_mode: item.overcompliance_mode || (item.has_cap ? 'none' : 'proportional'),
+    cap_units: item.cap_units || null,
+    pxq_bonus_amount: item.pxq_bonus_amount || null,
+    overcap_max_units: item.overcap_max_units || null,
+    overcap_max_amount: item.overcap_max_amount || null,
+    measurement_type: item.measurement_type || 'UNIT_COUNT',
+    fulfillment_method: item.fulfillment_method || 'RATIO',
+    measurement_config: item.measurement_config || null,
+    variable_source: item.variable_source || 'FROM_MIX',
+    // Convertir locks legacy a multipliers
+    multipliers: convertLocksToMultipliers(item.locks || [])
+  }
+}
+
+/**
+ * Convierte candados legacy a multiplicadores
+ */
+function convertLocksToMultipliers(locks: LegacyLock[]): ItemMultiplier[] {
+  return locks.filter(l => l.is_active).map(lock => ({
+    id: lock.id,
+    itemId: lock.item_id,
+    multiplierType: 'LOCK' as MultiplierType,
+    activationCriteria: lock.lock_type === 'MIN_QUANTITY' 
+      ? 'MIN_QUANTITY' as ActivationCriteria
+      : 'OTHER_ATTAINMENT' as ActivationCriteria,
+    sourceDescription: lock.description || `Candado: ${lock.lock_type}`,
+    sourceItemId: lock.required_item_type_id,
+    thresholdValue: lock.required_value,
+    factorIfMet: 1,
+    factorIfNotMet: 0,
+    tieredRanges: null,
+    operatorCedente: null,
+    measurementType: 'UNIT_COUNT' as MeasurementType,
+    measurementConfig: null,
+    isActive: true,
+    displayOrder: 0
+  }))
+}
+```
+
+---
+
+## 8. ORDEN DE IMPLEMENTACIÓN
+
+### 8.1 Para Claude Code
+
+```
+1. TIPOS (Prioridad Alta)
+   └─ Actualizar lib/simulador/types.ts con interfaces v2.0
+   └─ Actualizar lib/comisiones/types.ts si es necesario
+
+2. HOOKS (Prioridad Alta)
+   └─ Actualizar loadSchemeWithItems() para cargar multipliers
+   └─ Crear calculateCommissionV2() en hooks.ts
+   └─ Actualizar simulateLocal() para usar nuevo motor
+
+3. HELPERS (Prioridad Media)
+   └─ Crear evaluateMultiplier()
+   └─ Crear calculateOvercompliance()
+   └─ Crear normalizeToV2() para compatibilidad
+
+4. COMPONENTES (Prioridad Media)
+   └─ Actualizar ResultBreakdown.tsx
+   └─ Actualizar SimulationResult.tsx
+   └─ Actualizar SalesInputTable.tsx (soporte measurement_type)
+
+5. PRUEBAS (Prioridad Alta)
+   └─ Verificar con esquema TEX real
+   └─ Validar cálculos contra Excel de referencia
+```
+
+### 8.2 Archivos Nuevos a Crear
+
+```
+lib/simulador/
+├── calculation-engine.ts    # Motor de cálculo v2.0
+├── multiplier-evaluator.ts  # Evaluación de multiplicadores
+├── overcompliance.ts        # Lógica de sobrecumplimiento
+└── normalizers.ts           # Compatibilidad legacy
+```
+
+---
+
+## 9. VERIFICACIÓN
+
+### 9.1 Checklist de Implementación
+
+- [ ] Tipos TypeScript actualizados
+- [ ] Hook loadSchemeWithItems carga multipliers
+- [ ] Motor de cálculo 6 pasos implementado
+- [ ] Evaluación de multiplicadores funciona
+- [ ] Sobrecumplimiento (3 modalidades) funciona
+- [ ] variable_source diferencia FROM_MIX vs FIXED_EXTRA
+- [ ] Componentes UI muestran multiplicadores
+- [ ] Componentes UI muestran sobrecumplimiento
+- [ ] Compatible con esquemas legacy (sin campos v3.x)
+- [ ] Pruebas con esquema TEX real
+
+### 9.2 Casos de Prueba
+
+| Caso | Entrada | Resultado Esperado |
+|------|---------|-------------------|
+| Multiplicador LOCK | MEP=0, OSS=10 | RENO comisión=0 (bloqueado) |
+| Multiplicador LOCK | MEP=2, OSS=10 | RENO comisión calculada |
+| Sobrecumplimiento none | 120% cumpl. | Comisión = variable_amount |
+| Sobrecumplimiento proportional | 120% cumpl. | Comisión = variable_amount × 1.2 |
+| Sobrecumplimiento pxq_bonus | 120% cumpl. | Comisión base + (unidades_extra × pxq_bonus_amount) |
+| variable_source FIXED_EXTRA | Partida adicional | No cuenta en validación Mix 100% |
+
+---
+
+**Este documento es la guía completa para actualizar el Simulador de Ingresos a v2.0. Adjuntar a Claude Code junto con DATA_DICTIONARY.md y CHANGELOG_COMISIONES.md**

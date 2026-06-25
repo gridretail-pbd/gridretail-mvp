@@ -62,6 +62,8 @@ export interface Venta {
   hora: string
   tienda_id: string
   usuario_id: string
+  // Vínculo obligatorio al arribo de origen (migración 029).
+  arribo_id: string
   codigo_asesor?: string
   dni_asesor?: string
 
@@ -101,11 +103,20 @@ export interface Arribo {
   usuario_id: string
   registrado_por?: string
 
+  tipo_documento_cliente?: 'DNI' | 'CE' | 'RUC' | 'PASAPORTE' | 'PTP' | 'OTRO'
   dni_cliente?: string
+  nombre_cliente?: string
   es_cliente_entel?: boolean
   tipo_visita?: 'VENTA' | 'POSVENTA'
   concreto_operacion?: boolean
-  se_vendio?: boolean
+  // Reemplaza a se_vendio (migración 029). NULL en POSVENTA.
+  resultado?:
+    | 'NO_VENDIO'
+    | 'VENTA_DECLARADA_PENDIENTE'
+    | 'VENTA_PENDIENTE_APROBACION'
+    | 'VENDIDO_CONFIRMADO'
+    | 'VENTA_ANULADA'
+    | null
   motivo_no_venta?: string
 
   created_at: string

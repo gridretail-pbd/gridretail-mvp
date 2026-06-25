@@ -143,26 +143,15 @@ export default function SimuladorPage() {
     // v1.2: Obtener cuota del HC si está disponible
     const hcQuota = selectedHC?.cuota_efectiva || undefined
 
-    // Intentar simular con RPC, sino usar cálculo local
+    // v2.0: Usar siempre cálculo local (el RPC tiene bugs con columnas inexistentes)
+    // TODO: Arreglar el RPC simulate_hc_commission en la BD
     try {
-      const rpcResult = await simulate({
-        schemeId: selectedScheme.id,
-        salesData,
-        includePenalties,
-        userId: selectedHC?.id,
-        hcQuota,
-      })
-
-      if (!rpcResult) {
-        // Fallback a cálculo local (con cuota del HC)
-        await simulateLocal(selectedScheme, salesData, hcQuota)
-      }
-
+      await simulateLocal(selectedScheme, salesData, hcQuota)
       setActiveTab('result')
     } catch (err) {
       console.error('Error en simulación:', err)
     }
-  }, [selectedScheme, salesData, includePenalties, simulate, simulateLocal, selectedHC])
+  }, [selectedScheme, salesData, simulateLocal, selectedHC])
 
   const handleClearData = useCallback(() => {
     if (selectedScheme && selectedProfile !== 'custom') {

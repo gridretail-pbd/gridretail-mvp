@@ -59,6 +59,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           .eq('scheme_item_id', item.id)
           .order('display_order')
 
+        // Obtener multiplicadores
+        const { data: multipliers } = await supabase
+          .from('commission_item_multipliers')
+          .select('*')
+          .eq('item_id', item.id)
+          .order('display_order')
+
         // Transformar commission_item_ventas a formato más limpio
         const tiposVenta = (item.commission_item_ventas || []).map((civ: {
           id: string
@@ -82,6 +89,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           commission_item_ventas: undefined, // Limpiar el campo original
           locks: locks || [],
           pxq_scales: pxqScales || [],
+          multipliers: multipliers || [],
         }
       })
     )
@@ -180,6 +188,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       is_active: body.is_active ?? true,
       display_order: body.display_order ?? nextOrder,
       notes: body.notes ?? null,
+      contribution_type: body.contribution_type ?? 'PONDERADA',
+      range_source: body.range_source ?? 'CUOTA_PROPIA',
+      uses_conversion_table: body.uses_conversion_table ?? false,
+      accelerator_ranges: body.accelerator_ranges ?? null,
+      measurement_type: body.measurement_type ?? 'UNIT_COUNT',
+      fulfillment_method: body.fulfillment_method ?? 'RATIO',
+      measurement_config: body.measurement_config ?? null,
+      overcompliance_mode: body.overcompliance_mode ?? 'none',
+      cap_units: body.cap_units ?? null,
+      pxq_bonus_amount: body.pxq_bonus_amount ?? null,
+      overcap_max_units: body.overcap_max_units ?? null,
+      overcap_max_amount: body.overcap_max_amount ?? null,
+      variable_source: body.variable_source ?? 'FROM_MIX',
     }
 
     const { data: item, error } = await supabase

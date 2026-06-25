@@ -13,6 +13,7 @@ import {
   Filter,
   Loader2,
   FileSpreadsheet,
+  Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -50,6 +51,17 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { SchemeStatusBadge } from '@/components/comisiones/SchemeStatusBadge'
 import {
   CommissionScheme,
@@ -61,6 +73,7 @@ import {
 } from '@/lib/comisiones'
 import { getUsuarioFromLocalStorage } from '@/lib/auth-client'
 import { Usuario } from '@/types'
+import { toast } from 'sonner'
 
 // Roles que pueden crear/editar esquemas
 const ROLES_EDICION = ['ADMIN', 'GERENTE_COMERCIAL', 'BACKOFFICE_OPERACIONES']
@@ -159,6 +172,54 @@ export default function EsquemasPage() {
       currency: 'PEN',
     }).format(amount)
   }
+
+  const handleDeleteScheme = async (schemeId: string) => {
+    try {
+      const response = await fetch(`/api/comisiones/esquemas/${schemeId}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Error al eliminar esquema')
+      }
+      setSchemes(schemes.filter(s => s.id !== schemeId))
+      toast.success('Esquema eliminado')
+    } catch (error) {
+      console.error('Error:', error)
+      toast.error(error instanceof Error ? error.message : 'Error al eliminar esquema')
+    }
+  }
+
+  const handleCloneScheme = async (scheme: SchemeWithMeta) => {
+    try {
+      const timestamp = Date.now().toString(36).toUpperCase()
+      const response = await fetch(`/api/comisiones/esquemas/${scheme.id}/clonar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `${scheme.name} (Copia)`,
+          code: `${scheme.code}_${timestamp}`,
+          created_by: user?.id,
+        }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Error al clonar esquema')
+      }
+
+      const data = await response.json()
+      toast.success('Esquema clonado exitosamente')
+
+      // Recargar la lista o agregar el nuevo esquema
+      setSchemes(prev => [data.scheme, ...prev])
+    } catch (error) {
+      console.error('Error:', error)
+      toast.error(error instanceof Error ? error.message : 'Error al clonar esquema')
+    }
+  }
+
+  const canDelete = user?.rol && ['ADMIN', 'GERENTE_COMERCIAL'].includes(user.rol)
 
   const currentYear = new Date().getFullYear()
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i)
@@ -385,7 +446,7 @@ export default function EsquemasPage() {
                             </DropdownMenuItem>
                           )}
                           {canEdit && (
-                            <DropdownMenuItem disabled>
+                            <DropdownMenuItem onClick={() => handleCloneScheme(scheme)}>
                               <Copy className="mr-2 h-4 w-4" />
                               Clonar
                             </DropdownMenuItem>
@@ -395,6 +456,36 @@ export default function EsquemasPage() {
                               <Check className="mr-2 h-4 w-4" />
                               Aprobar
                             </DropdownMenuItem>
+                          )}
+                          {canDelete && scheme.status === 'draft' && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onSelect={(e) => e.preventDefault()}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Eliminar
+                                </DropdownMenuItem>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>¿Eliminar esquema?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Se eliminará permanentemente el esquema &quot;{scheme.name}&quot; y todas sus partidas, candados y restricciones asociadas. Esta acción no se puede deshacer.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleDeleteScheme(scheme.id)}
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  >
+                                    Eliminar
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
                           )}
                         </DropdownMenuContent>
                       </DropdownMenu>

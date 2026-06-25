@@ -9,9 +9,12 @@ import { createClient } from '@/lib/supabase/client'
 import type {
   SimulationInput,
   SimulationResult,
+  SimulationResultV2,
   ItemDetail,
   SchemeForSimulation,
+  SchemeForSimulationV2,
   SchemeItemWithMapping,
+  SchemeItemV2,
   SalesData,
   Scenario,
   SalesProfile,
@@ -20,6 +23,7 @@ import type {
   HCEffectiveQuota,
   QuotaBreakdown,
 } from './types'
+import type { CommissionItemMultiplier } from '@/lib/comisiones/types'
 import {
   generateSalesProfile,
   getEffectiveItemName,
@@ -28,6 +32,8 @@ import {
   getEffectiveCalculationType,
   prepareSalesDataForRPC,
 } from './profiles'
+import { calculateCommissionV2 } from './calculation-engine'
+import { normalizeItemToV2, normalizeSchemeToV2, isV2Scheme } from './normalizers'
 
 // ============================================================================
 // HOOK: useSimulation
@@ -38,7 +44,7 @@ import {
  */
 export function useSimulation() {
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<SimulationResult | null>(null)
+  const [result, setResult] = useState<SimulationResult | SimulationResultV2 | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const supabase = createClient()
@@ -76,16 +82,37 @@ export function useSimulation() {
   /**
    * Simula usando cálculo local (fallback si RPC no está disponible)
    * v1.2: Acepta cuota del HC para prorrateo
+   * v2.0: Detecta esquemas v2 y usa motor de 6 pasos
    */
   const simulateLocal = useCallback(async (
-    scheme: SchemeForSimulation,
+    scheme: SchemeForSimulation | SchemeForSimulationV2,
     salesData: SalesData,
     hcQuota?: HCEffectiveQuota
-  ): Promise<SimulationResult> => {
+  ): Promise<SimulationResult | SimulationResultV2> => {
     setLoading(true)
     setError(null)
 
     try {
+      // v2.0: Detectar si el esquema tiene campos v2
+      if (isV2Scheme(scheme)) {
+        const result = calculateCommissionV2(scheme as SchemeForSimulationV2, salesData, hcQuota)
+        setResult(result)
+        return result
+      }
+
+      // v1.x: Normalizar a v2 si tiene algunos campos pero no todos
+      const hasV2Fields = scheme.items.some(item =>
+        'contribution_type' in item || 'multipliers' in item
+      )
+
+      if (hasV2Fields) {
+        const normalizedScheme = normalizeSchemeToV2(scheme)
+        const result = calculateCommissionV2(normalizedScheme, salesData, hcQuota)
+        setResult(result)
+        return result
+      }
+
+      // Legacy: usar cálculo v1
       const result = calculateCommissionLocally(scheme, salesData, hcQuota)
       setResult(result)
       return result
@@ -126,7 +153,7 @@ export function useSimulation() {
 export function useSchemeData() {
   const [loading, setLoading] = useState(false)
   const [schemes, setSchemes] = useState<SchemeForSimulation[]>([])
-  const [selectedScheme, setSelectedScheme] = useState<SchemeForSimulation | null>(null)
+  const [selectedScheme, setSelectedScheme] = useState<SchemeForSimulation | SchemeForSimulationV2 | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const supabase = createClient()
@@ -186,28 +213,79 @@ export function useSchemeData() {
 
   /**
    * Carga un esquema completo con sus partidas
+   * v2.0: Carga campos v3.x y multiplicadores
    */
-  const loadSchemeWithItems = useCallback(async (schemeId: string) => {
+  const loadSchemeWithItems = useCallback(async (schemeId: string): Promise<SchemeForSimulation | SchemeForSimulationV2 | null> => {
     setLoading(true)
     setError(null)
 
     try {
-      // Cargar esquema
+      // Cargar esquema con campos v3.x
       const { data: schemeData, error: schemeError } = await supabase
         .from('commission_schemes')
-        .select('*')
+        .select(`
+          *,
+          accelerator_base,
+          conversion_table,
+          global_range_method
+        `)
         .eq('id', schemeId)
         .single()
 
       if (schemeError) throw schemeError
 
-      // Cargar partidas con todos los joins necesarios
+      // Cargar partidas con SELECT explícito (evitar * que incluye columnas inexistentes)
+      // IMPORTANTE: category y calculation_type NO existen en la tabla, vienen de JOINs
       const { data: itemsData, error: itemsError } = await supabase
         .from('commission_scheme_items')
         .select(`
-          *,
-          item_type:commission_item_types(code, name, category, calculation_type),
-          preset:partition_presets(code, name, short_name, default_category, default_calculation_type),
+          id,
+          scheme_id,
+          item_type_id,
+          preset_id,
+          custom_name,
+          custom_description,
+          original_label,
+          quota,
+          quota_amount,
+          weight,
+          mix_factor,
+          variable_amount,
+          min_fulfillment,
+          has_cap,
+          cap_percentage,
+          cap_amount,
+          is_active,
+          display_order,
+          notes,
+          contribution_type,
+          range_source,
+          uses_conversion_table,
+          accelerator_ranges,
+          overcompliance_mode,
+          cap_units,
+          pxq_bonus_amount,
+          overcap_max_units,
+          overcap_max_amount,
+          measurement_type,
+          fulfillment_method,
+          measurement_config,
+          variable_source,
+          item_type:commission_item_types(
+            id,
+            code,
+            name,
+            category,
+            calculation_type
+          ),
+          preset:partition_presets(
+            id,
+            code,
+            name,
+            short_name,
+            default_category,
+            default_calculation_type
+          ),
           locks:commission_item_locks(*),
           pxq_scales:commission_pxq_scales(*)
         `)
@@ -220,8 +298,10 @@ export function useSchemeData() {
       // Cargar mapeos de tipos de venta para cada partida
       const itemIds = itemsData?.map(i => i.id) || []
       let ventasMappings: Record<string, TipoVentaMapping[]> = {}
+      let multipliersMap: Record<string, CommissionItemMultiplier[]> = {}
 
       if (itemIds.length > 0) {
+        // Cargar tipos de venta
         const { data: ventasData } = await supabase
           .from('commission_item_ventas')
           .select(`
@@ -237,7 +317,6 @@ export function useSchemeData() {
         ventasMappings = (ventasData || []).reduce((acc, v) => {
           const itemId = v.scheme_item_id
           if (!acc[itemId]) acc[itemId] = []
-          // El join puede retornar un objeto o array dependiendo de la cardinalidad
           const tipoVenta = Array.isArray(v.tipo_venta) ? v.tipo_venta[0] : v.tipo_venta
           acc[itemId].push({
             tipoVentaId: v.tipo_venta_id,
@@ -249,13 +328,100 @@ export function useSchemeData() {
           })
           return acc
         }, {} as Record<string, TipoVentaMapping[]>)
+
+        // v2.0: Cargar multiplicadores
+        const { data: multipliersData } = await supabase
+          .from('commission_item_multipliers')
+          .select('*')
+          .in('item_id', itemIds)
+          .eq('is_active', true)
+          .order('display_order')
+
+        // Agrupar por item_id
+        multipliersMap = (multipliersData || []).reduce((acc, m) => {
+          const itemId = m.item_id
+          if (!acc[itemId]) acc[itemId] = []
+          acc[itemId].push(m as CommissionItemMultiplier)
+          return acc
+        }, {} as Record<string, CommissionItemMultiplier[]>)
       }
 
-      // Mapear partidas con sus tipos de venta
-      const itemsWithMapping: SchemeItemWithMapping[] = (itemsData || []).map(item => ({
-        ...item,
-        mapped_tipos_venta: ventasMappings[item.id] || []
-      }))
+      // Verificar si el esquema tiene campos v2.0
+      const hasV2SchemeFields = schemeData.accelerator_base || schemeData.conversion_table
+      const hasV2ItemFields = itemsData?.some(item =>
+        item.contribution_type || item.overcompliance_mode || item.measurement_type
+      )
+      const hasMultipliers = Object.keys(multipliersMap).length > 0
+
+      if (hasV2SchemeFields || hasV2ItemFields || hasMultipliers) {
+        // Construir esquema v2
+        const itemsV2: SchemeItemV2[] = (itemsData || []).map(item => {
+          // Derivar category y calculation_type de preset o item_type (NO existen en la tabla)
+          const category = item.preset?.default_category
+            || item.item_type?.category
+            || 'adicional'
+          const calculationType = item.preset?.default_calculation_type
+            || item.item_type?.calculation_type
+            || 'percentage'
+
+          return {
+            ...item,
+            mapped_tipos_venta: ventasMappings[item.id] || [],
+            // Campos derivados de joins (NO existen en la tabla)
+            category,
+            calculation_type: calculationType,
+            // v3.2 con defaults
+            contribution_type: item.contribution_type || 'PONDERADA',
+            range_source: item.range_source || 'CUOTA_PROPIA',
+            uses_conversion_table: item.uses_conversion_table || false,
+            accelerator_ranges: item.accelerator_ranges || null,
+            // v3.3 con defaults
+            measurement_type: item.measurement_type || 'UNIT_COUNT',
+            fulfillment_method: item.fulfillment_method || 'RATIO',
+            measurement_config: item.measurement_config || null,
+            // v3.0.1 con defaults
+            overcompliance_mode: item.overcompliance_mode || (item.has_cap ? 'none' : 'proportional'),
+            cap_units: item.cap_units || null,
+            pxq_bonus_amount: item.pxq_bonus_amount || null,
+            overcap_max_units: item.overcap_max_units || null,
+            overcap_max_amount: item.overcap_max_amount || null,
+            // v3.4 con defaults
+            variable_source: item.variable_source || 'FROM_MIX',
+            // Multiplicadores (prioridad sobre locks legacy)
+            multipliers: multipliersMap[item.id] || [],
+          }
+        })
+
+        const schemeV2: SchemeForSimulationV2 = {
+          ...schemeData,
+          accelerator_base: schemeData.accelerator_base || 'VARIABLE_TEORICO',
+          conversion_table: schemeData.conversion_table || null,
+          global_range_method: schemeData.global_range_method || null,
+          items: itemsV2,
+        }
+
+        setSelectedScheme(schemeV2)
+        return schemeV2
+      }
+
+      // Legacy: mapear partidas sin campos v2
+      const itemsWithMapping: SchemeItemWithMapping[] = (itemsData || []).map(item => {
+        // Derivar category y calculation_type de preset o item_type (NO existen en la tabla)
+        const category = item.preset?.default_category
+          || item.item_type?.category
+          || 'adicional'
+        const calculationType = item.preset?.default_calculation_type
+          || item.item_type?.calculation_type
+          || 'percentage'
+
+        return {
+          ...item,
+          // Campos derivados de joins (NO existen en la tabla)
+          category,
+          calculation_type: calculationType,
+          mapped_tipos_venta: ventasMappings[item.id] || []
+        }
+      })
 
       const scheme: SchemeForSimulation = {
         ...schemeData,

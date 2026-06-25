@@ -15,6 +15,7 @@ import {
   User,
   DollarSign,
   Target,
+  Settings2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -201,10 +202,31 @@ export default function EsquemaDetallePage({
 
   const { scheme, items, restrictions } = data
   const isDraft = scheme.status === 'draft'
-  const principalItems = items.filter(i => i.item_type?.category === 'principal')
-  const adicionalItems = items.filter(i => i.item_type?.category === 'adicional')
-  const pxqItems = items.filter(i => i.item_type?.category === 'pxq')
-  const bonoItems = items.filter(i => i.item_type?.category === 'bono')
+  const ponderadaItems = items.filter(i => (i as any).contribution_type === 'PONDERADA' || (!(i as any).contribution_type && (i.item_type?.category === 'principal' || i.item_type?.category === 'adicional')))
+  const aceleradorItems = items.filter(i => (i as any).contribution_type === 'ACELERADOR')
+  const pxqItems = items.filter(i => (i as any).contribution_type === 'PXQ_INDEPENDIENTE' || (!(i as any).contribution_type && i.item_type?.category === 'pxq'))
+  const bonoItems = items.filter(i => (i as any).contribution_type === 'BONO' || (!(i as any).contribution_type && i.item_type?.category === 'bono'))
+
+  // Calcular suma de cuotas de partidas principales para detectar desajustes
+  // Las partidas principales son aquellas que contribuyen a la cuota SS:
+  // - OSS (portabilidad post→post)
+  // - OPP (portabilidad pre→post)
+  // - VR (venta regular)
+  // Se identifican por nombre/código que contenga estos patrones
+  const ssPatterns = ['OSS', 'OPP', 'VR_', 'VR ']
+  const principalItems = items.filter(i => {
+    if (!i.is_active) return false
+    const name = ((i as any).custom_name || (i as any).preset?.name || i.item_type?.name || i.item_type?.code || '').toUpperCase()
+    // Incluir si el nombre contiene algún patrón SS
+    return ssPatterns.some(pattern => name.includes(pattern))
+  })
+
+  // Verificar que los items identificados tienen peso y suman ~100%
+  const principalWeightSum = principalItems.reduce((sum, i) => sum + (i.weight || 0), 0)
+  const isPrincipalGroupValid = principalItems.length > 0 && Math.abs(principalWeightSum - 1) < 0.1
+
+  const principalQuotaSum = principalItems.reduce((sum, i) => sum + (i.quota || 0), 0)
+  const hasQuotaMismatch = isPrincipalGroupValid && principalQuotaSum > 0 && principalQuotaSum !== scheme.total_ss_quota
 
   return (
     <div className="space-y-6">
@@ -230,6 +252,16 @@ export default function EsquemaDetallePage({
         </div>
 
         <div className="flex gap-2">
+          {canEdit && isDraft && (
+            <Button
+              variant="outline"
+              onClick={() => router.push(`/comisiones/esquemas/${id}/editar`)}
+            >
+              <Settings2 className="mr-2 h-4 w-4" />
+              Editar Esquema
+            </Button>
+          )}
+
           {canEdit && isDraft && (
             <Button
               variant="outline"
@@ -282,6 +314,34 @@ export default function EsquemaDetallePage({
           )}
         </div>
       </div>
+
+      {/* Alerta de desajuste de cuotas */}
+      {hasQuotaMismatch && isDraft && (
+        <Card className="border-yellow-500 bg-yellow-50 dark:bg-yellow-950">
+          <CardContent className="pt-6">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-medium text-yellow-800 dark:text-yellow-200">
+                  Desajuste en cuotas de partidas
+                </p>
+                <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                  La suma de cuotas de partidas principales ({principalQuotaSum}) no coincide con
+                  la Cuota SS Total del esquema ({scheme.total_ss_quota}).
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => router.push(`/comisiones/esquemas/${id}/editar`)}
+                >
+                  Ir a Editar Esquema para corregir
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Información y Montos */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -357,6 +417,18 @@ export default function EsquemaDetallePage({
               <span className="text-muted-foreground">Cumplimiento Mínimo:</span>
               <span>{((scheme.default_min_fulfillment || 0.5) * 100).toFixed(0)}%</span>
             </div>
+            {(scheme as any).accelerator_base && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Base Acelerador:</span>
+                <span>{formatCurrency((scheme as any).accelerator_base)}</span>
+              </div>
+            )}
+            {(scheme as any).conversion_table && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Tabla de conversión:</span>
+                <span>Sí</span>
+              </div>
+            )}
             <hr />
             <div className="flex justify-between text-lg">
               <span className="font-medium">Ingreso Potencial:</span>
@@ -389,11 +461,11 @@ export default function EsquemaDetallePage({
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Partidas Principales */}
-              {principalItems.length > 0 && (
+              {/* Partidas Ponderadas */}
+              {ponderadaItems.length > 0 && (
                 <div>
                   <h4 className="font-semibold mb-2 text-sm text-muted-foreground uppercase tracking-wide">
-                    Principales ({principalItems.reduce((sum, i) => sum + (i.weight || 0), 0) * 100}% del variable)
+                    Ponderadas ({(ponderadaItems.reduce((sum, i) => sum + (i.weight || 0), 0) * 100).toFixed(0)}% del variable)
                   </h4>
                   <Table>
                     <TableHeader>
@@ -404,87 +476,90 @@ export default function EsquemaDetallePage({
                         <TableHead className="text-right">Variable</TableHead>
                         <TableHead className="text-right">Cumpl. Mín</TableHead>
                         <TableHead className="text-center">Tope</TableHead>
+                        <TableHead className="text-center">Mult.</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {principalItems.map((item) => (
-                        <TableRow key={item.id}>
-                          <TableCell className="font-medium">
-                            {item.item_type?.name || item.item_type?.code}
-                          </TableCell>
-                          <TableCell className="text-right">{item.quota}</TableCell>
-                          <TableCell className="text-right">
-                            {((item.weight || 0) * 100).toFixed(0)}%
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(item.variable_amount)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {item.min_fulfillment
-                              ? `${(item.min_fulfillment * 100).toFixed(0)}%`
-                              : '-'}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            {item.has_cap ? (
-                              <Badge variant="outline">
-                                {item.cap_percentage
-                                  ? `${(item.cap_percentage * 100).toFixed(0)}%`
-                                  : 'Sí'}
-                              </Badge>
-                            ) : (
-                              '-'
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {ponderadaItems.map((item) => {
+                        const multiplierCount = (item.locks?.length || 0) + ((item as any).multipliers?.length || 0)
+                        return (
+                          <TableRow key={item.id}>
+                            <TableCell className="font-medium">
+                              {(item as any).custom_name || item.preset?.name || item.item_type?.name || item.item_type?.code}
+                            </TableCell>
+                            <TableCell className="text-right">{item.quota}</TableCell>
+                            <TableCell className="text-right">
+                              {((item.weight || 0) * 100).toFixed(0)}%
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatCurrency(item.variable_amount)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {item.min_fulfillment
+                                ? `${(item.min_fulfillment * 100).toFixed(0)}%`
+                                : '-'}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {item.has_cap ? (
+                                <Badge variant="outline">
+                                  {item.cap_percentage
+                                    ? `${(item.cap_percentage * 100).toFixed(0)}%`
+                                    : 'Sí'}
+                                </Badge>
+                              ) : (
+                                '-'
+                              )}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {multiplierCount > 0 ? (
+                                <Badge variant="secondary" className="gap-1">
+                                  <Lock className="h-3 w-3" />
+                                  {multiplierCount}
+                                </Badge>
+                              ) : (
+                                '-'
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
                     </TableBody>
                   </Table>
                 </div>
               )}
 
-              {/* Partidas Adicionales */}
-              {adicionalItems.length > 0 && (
+              {/* Aceleradores */}
+              {aceleradorItems.length > 0 && (
                 <div>
                   <h4 className="font-semibold mb-2 text-sm text-muted-foreground uppercase tracking-wide">
-                    Adicionales
+                    Aceleradores
                   </h4>
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Tipo</TableHead>
-                        <TableHead className="text-right">Meta</TableHead>
-                        <TableHead className="text-right">Variable</TableHead>
-                        <TableHead className="text-right">Cumpl. Mín</TableHead>
-                        <TableHead className="text-center">Candados</TableHead>
+                        <TableHead className="text-right">Rango de Efecto</TableHead>
+                        <TableHead className="text-right">Variable Base</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {adicionalItems.map((item) => (
-                        <TableRow key={item.id}>
-                          <TableCell className="font-medium">
-                            {item.item_type?.name || item.item_type?.code}
-                          </TableCell>
-                          <TableCell className="text-right">{item.quota || '-'}</TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(item.variable_amount)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {item.min_fulfillment
-                              ? `${(item.min_fulfillment * 100).toFixed(0)}%`
-                              : '-'}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            {item.locks && item.locks.length > 0 ? (
-                              <Badge variant="secondary" className="gap-1">
-                                <Lock className="h-3 w-3" />
-                                {item.locks.length}
-                              </Badge>
-                            ) : (
-                              '-'
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {aceleradorItems.map((item) => {
+                        const ranges = (item as any).ranges || (item as any).scale_ranges || []
+                        const rangeSummary = ranges.length > 0
+                          ? `${ranges.length} tramos`
+                          : `${((item.min_fulfillment || 0) * 100).toFixed(0)}% - ${item.has_cap && item.cap_percentage ? `${(item.cap_percentage * 100).toFixed(0)}%` : '∞'}`
+                        return (
+                          <TableRow key={item.id}>
+                            <TableCell className="font-medium">
+                              {(item as any).custom_name || item.preset?.name || item.item_type?.name || item.item_type?.code}
+                            </TableCell>
+                            <TableCell className="text-right">{rangeSummary}</TableCell>
+                            <TableCell className="text-right">
+                              {formatCurrency(item.variable_amount)}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -502,7 +577,7 @@ export default function EsquemaDetallePage({
                         <ul className="space-y-1 text-sm">
                           {pxqItems.map((item) => (
                             <li key={item.id} className="flex justify-between">
-                              <span>{item.item_type?.name}</span>
+                              <span>{(item as any).custom_name || item.item_type?.name}</span>
                               <span className="text-muted-foreground">
                                 {formatCurrency(item.variable_amount)}
                               </span>
@@ -522,7 +597,7 @@ export default function EsquemaDetallePage({
                         <ul className="space-y-1 text-sm">
                           {bonoItems.map((item) => (
                             <li key={item.id} className="flex justify-between">
-                              <span>{item.item_type?.name}</span>
+                              <span>{(item as any).custom_name || item.item_type?.name}</span>
                               <span className="text-muted-foreground">
                                 {formatCurrency(item.variable_amount)}
                               </span>

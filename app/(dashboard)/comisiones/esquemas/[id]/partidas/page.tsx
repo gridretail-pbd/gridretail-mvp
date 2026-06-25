@@ -10,8 +10,10 @@ import {
   Trash2,
   Lock,
   AlertTriangle,
+  CheckCircle,
   ChevronRight,
   GripVertical,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,9 +37,18 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { SchemeStatusBadge } from '@/components/comisiones/SchemeStatusBadge'
 import { SchemeItemModal } from '@/components/comisiones/SchemeItemModal'
 import { LockConfigModal } from '@/components/comisiones/LockConfigModal'
+import { MultiplierModal } from '@/components/comisiones/MultiplierModal'
+import { MultiplierSection } from '@/components/comisiones/MultiplierSection'
 import {
   CommissionScheme,
   CommissionSchemeItem,
@@ -48,8 +59,10 @@ import {
   formatPeriod,
   SCHEME_TYPE_LABELS,
   ITEM_CATEGORY_LABELS,
+  CONTRIBUTION_TYPE_LABELS,
+  type CommissionItemMultiplier,
 } from '@/lib/comisiones'
-import { type SchemeItemFormValues, type LockFormValues } from '@/lib/comisiones/validations'
+import { type SchemeItemFormValues, type LockFormValues, type MultiplierFormValues } from '@/lib/comisiones/validations'
 import { getUsuarioFromLocalStorage } from '@/lib/auth-client'
 import { Usuario } from '@/types'
 import { toast } from 'sonner'
@@ -80,6 +93,7 @@ interface ItemVenta {
 // Use Omit to avoid conflict with tipos_venta type from parent
 interface ItemWithLocks extends Omit<CommissionSchemeItem, 'tipos_venta'> {
   locks: CommissionItemLock[]
+  multipliers: Array<{ id: string; multiplier_type: string; source_description?: string; factor_if_met: number; factor_if_not_met: number; is_active: boolean }>
   pxq_scales: Array<{ id: string; min_fulfillment: number; max_fulfillment?: number; amount_per_unit: number }>
   tipos_venta?: ItemVenta[]
 }
@@ -105,6 +119,9 @@ export default function PartidasPage({
   const [editingItem, setEditingItem] = useState<ItemWithLocks | null>(null)
   const [lockModalOpen, setLockModalOpen] = useState(false)
   const [selectedItemForLocks, setSelectedItemForLocks] = useState<ItemWithLocks | null>(null)
+  const [multiplierModalOpen, setMultiplierModalOpen] = useState(false)
+  const [multiplierDialogOpen, setMultiplierDialogOpen] = useState(false)
+  const [selectedItemForMultipliers, setSelectedItemForMultipliers] = useState<ItemWithLocks | null>(null)
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
 
   const isDraft = scheme?.status === 'draft'
@@ -312,6 +329,74 @@ export default function PartidasPage({
     }
   }
 
+  const handleAddMultiplier = async (values: MultiplierFormValues) => {
+    if (!selectedItemForMultipliers) return
+
+    try {
+      setSaving(true)
+      const response = await fetch(`/api/comisiones/esquemas/${id}/partidas/${selectedItemForMultipliers.id}/multiplicadores`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(values),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Error al agregar multiplicador')
+      }
+
+      // Actualizar el item con el nuevo multiplicador
+      setItems(items.map(item =>
+        item.id === selectedItemForMultipliers.id
+          ? { ...item, multipliers: [...(item.multipliers || []), data.multiplier] }
+          : item
+      ))
+      setSelectedItemForMultipliers(prev => prev ? {
+        ...prev,
+        multipliers: [...(prev.multipliers || []), data.multiplier],
+      } : null)
+      setMultiplierModalOpen(false)
+      toast.success('Multiplicador agregado')
+    } catch (error) {
+      console.error('Error:', error)
+      toast.error(error instanceof Error ? error.message : 'Error al agregar multiplicador')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeleteMultiplier = async (multiplierId: string) => {
+    if (!selectedItemForMultipliers) return
+
+    try {
+      const response = await fetch(
+        `/api/comisiones/esquemas/${id}/partidas/${selectedItemForMultipliers.id}/multiplicadores?multiplier_id=${multiplierId}`,
+        { method: 'DELETE' }
+      )
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Error al eliminar multiplicador')
+      }
+
+      // Actualizar el item sin el multiplicador eliminado
+      setItems(items.map(item =>
+        item.id === selectedItemForMultipliers.id
+          ? { ...item, multipliers: (item.multipliers || []).filter(m => m.id !== multiplierId) }
+          : item
+      ))
+      setSelectedItemForMultipliers(prev => prev ? {
+        ...prev,
+        multipliers: (prev.multipliers || []).filter(m => m.id !== multiplierId),
+      } : null)
+      toast.success('Multiplicador eliminado')
+    } catch (error) {
+      console.error('Error:', error)
+      toast.error(error instanceof Error ? error.message : 'Error al eliminar multiplicador')
+    }
+  }
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('es-PE', {
       style: 'currency',
@@ -319,10 +404,13 @@ export default function PartidasPage({
     }).format(amount)
   }
 
-  // Calcular suma de pesos de partidas principales
-  const principalItems = items.filter(i =>
-    i.item_type?.category === 'principal' || i.preset?.default_category === 'principal'
-  )
+  // Calcular suma de pesos de partidas principales (v3.2: filtrar por contribution_type + category)
+  // Solo partidas PONDERADAS con categoría 'principal' cuentan hacia el 100%
+  const principalItems = items.filter(i => {
+    const category = i.preset?.default_category || i.item_type?.category || 'adicional'
+    const isPonderada = i.contribution_type === 'PONDERADA' || (!i.contribution_type && (category === 'principal'))
+    return isPonderada && category === 'principal'
+  })
   const totalWeight = principalItems.reduce((sum, item) => sum + (item.weight || 0), 0)
   const weightsValid = Math.abs(totalWeight - 1) <= 0.001
 
@@ -426,13 +514,15 @@ export default function PartidasPage({
                 <TableRow>
                   <TableHead className="w-[50px]"></TableHead>
                   <TableHead>Tipo</TableHead>
+                  <TableHead>Tipo Contrib.</TableHead>
                   <TableHead>Categoría</TableHead>
                   <TableHead className="text-right">Meta</TableHead>
                   <TableHead className="text-right">Peso</TableHead>
-                  <TableHead className="text-right">Variable</TableHead>
+                  <TableHead className="text-right">Mix</TableHead>
+                  <TableHead className="text-right">Variable S/.</TableHead>
                   <TableHead className="text-right">Cumpl. Mín</TableHead>
                   <TableHead className="text-center">Tope</TableHead>
-                  <TableHead className="text-center">Candados</TableHead>
+                  <TableHead className="text-center">Multiplicadores</TableHead>
                   {canEdit && <TableHead className="text-right">Acciones</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -463,6 +553,11 @@ export default function PartidasPage({
                       )}
                     </TableCell>
                     <TableCell>
+                      <Badge variant="outline">
+                        {CONTRIBUTION_TYPE_LABELS[item.contribution_type || 'PONDERADA']}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
                       <Badge variant="secondary">
                         {ITEM_CATEGORY_LABELS[item.preset?.default_category || item.item_type?.category || 'adicional']}
                       </Badge>
@@ -472,6 +567,9 @@ export default function PartidasPage({
                     </TableCell>
                     <TableCell className="text-right">
                       {item.weight ? `${(item.weight * 100).toFixed(0)}%` : '-'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {item.mix_factor ? `${(item.mix_factor * 100).toFixed(0)}%` : '-'}
                     </TableCell>
                     <TableCell className="text-right">
                       {formatCurrency(item.variable_amount)}
@@ -491,25 +589,25 @@ export default function PartidasPage({
                       ) : '-'}
                     </TableCell>
                     <TableCell className="text-center">
-                      {item.locks.length > 0 ? (
+                      {(item.multipliers?.length || 0) > 0 ? (
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            setSelectedItemForLocks(item)
-                            setLockModalOpen(true)
+                            setSelectedItemForMultipliers(item)
+                            setMultiplierDialogOpen(true)
                           }}
                         >
-                          <Lock className="h-3 w-3 mr-1" />
-                          {item.locks.length}
+                          <SlidersHorizontal className="h-3 w-3 mr-1" />
+                          {item.multipliers.length}
                         </Button>
                       ) : canEdit ? (
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            setSelectedItemForLocks(item)
-                            setLockModalOpen(true)
+                            setSelectedItemForMultipliers(item)
+                            setMultiplierDialogOpen(true)
                           }}
                         >
                           <Plus className="h-3 w-3" />
@@ -563,6 +661,55 @@ export default function PartidasPage({
                     )}
                   </TableRow>
                 ))}
+                {/* Totals row for PONDERADA items that contribute to mix */}
+                {(() => {
+                  // Solo partidas PONDERADAS con categoría 'principal' cuentan para Meta/Peso
+                  const ponderadaPrincipalItems = items.filter(i => {
+                    const category = i.preset?.default_category || i.item_type?.category || 'adicional'
+                    const isPonderada = i.contribution_type === 'PONDERADA' || (!i.contribution_type && category === 'principal')
+                    return isPonderada && category === 'principal'
+                  })
+
+                  // Para Mix: Principal + Adicional con variable_source === 'FROM_MIX'
+                  const itemsContributingToMix = items.filter(i => {
+                    const category = i.preset?.default_category || i.item_type?.category || 'adicional'
+                    const isPonderada = i.contribution_type === 'PONDERADA' || (!i.contribution_type && category === 'principal')
+                    if (!isPonderada) return false
+                    // Principal siempre contribuye, Adicional solo si FROM_MIX (o no definido = default FROM_MIX)
+                    if (category === 'principal') return true
+                    return i.variable_source === 'FROM_MIX' || !i.variable_source
+                  })
+
+                  if (ponderadaPrincipalItems.length === 0 && itemsContributingToMix.length === 0) return null
+                  const totalMeta = ponderadaPrincipalItems.reduce((sum, i) => sum + (i.quota || 0), 0)
+                  const totalW = ponderadaPrincipalItems.reduce((sum, i) => sum + (i.weight || 0), 0)
+                  const totalMix = itemsContributingToMix.reduce((sum, i) => sum + (i.mix_factor || 0), 0)
+                  const totalVariable = itemsContributingToMix.reduce((sum, i) => sum + (i.variable_amount || 0), 0)
+                  const weightsOk = Math.abs(totalW - 1) <= 0.01 && Math.abs(totalMix - 1) <= 0.01
+                  const metaWarning = scheme.total_ss_quota && totalMeta > scheme.total_ss_quota
+                  return (
+                    <TableRow className="border-t-2 font-bold">
+                      <TableCell />
+                      <TableCell>
+                        Totales Principales
+                        {weightsOk && <CheckCircle className="inline ml-2 h-4 w-4 text-green-500" />}
+                      </TableCell>
+                      <TableCell />
+                      <TableCell />
+                      <TableCell className="text-right">
+                        {totalMeta}
+                        {metaWarning && <AlertTriangle className="inline ml-1 h-4 w-4 text-yellow-500" />}
+                      </TableCell>
+                      <TableCell className="text-right">{(totalW * 100).toFixed(0)}%</TableCell>
+                      <TableCell className="text-right">{(totalMix * 100).toFixed(0)}%</TableCell>
+                      <TableCell className="text-right">{formatCurrency(totalVariable)}</TableCell>
+                      <TableCell />
+                      <TableCell />
+                      <TableCell />
+                      {canEdit && <TableCell />}
+                    </TableRow>
+                  )
+                })()}
               </TableBody>
             </Table>
           )}
@@ -618,10 +765,27 @@ export default function PartidasPage({
           is_active: editingItem.is_active,
           display_order: editingItem.display_order,
           notes: editingItem.notes,
+          contribution_type: editingItem.contribution_type,
+          range_source: editingItem.range_source,
+          uses_conversion_table: editingItem.uses_conversion_table,
+          accelerator_ranges: editingItem.accelerator_ranges,
+          measurement_type: editingItem.measurement_type,
+          fulfillment_method: editingItem.fulfillment_method,
+          measurement_config: editingItem.measurement_config,
+          overcompliance_mode: editingItem.overcompliance_mode,
+          cap_units: editingItem.cap_units,
+          pxq_bonus_amount: editingItem.pxq_bonus_amount,
+          overcap_max_units: editingItem.overcap_max_units,
+          overcap_max_amount: editingItem.overcap_max_amount,
+          variable_source: editingItem.variable_source,
         } : undefined}
         onSubmit={editingItem ? handleEditItem : handleAddItem}
         isLoading={saving}
         isEditing={!!editingItem}
+        totalSSQuota={scheme.total_ss_quota}
+        variableSalary={scheme.variable_salary}
+        existingItems={items.map(i => ({ id: i.id, quota: i.quota, weight: i.weight, mix_factor: i.mix_factor }))}
+        editingItemId={editingItem?.id || null}
       />
 
       {selectedItemForLocks && (
@@ -636,6 +800,48 @@ export default function PartidasPage({
           existingLocks={selectedItemForLocks.locks}
           onAddLock={handleAddLock}
           onDeleteLock={handleDeleteLock}
+          isLoading={saving}
+        />
+      )}
+
+      {/* Dialog de Multiplicadores */}
+      {selectedItemForMultipliers && (
+        <Dialog
+          open={multiplierDialogOpen}
+          onOpenChange={(open) => {
+            setMultiplierDialogOpen(open)
+            if (!open) setSelectedItemForMultipliers(null)
+          }}
+        >
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                Multiplicadores - {selectedItemForMultipliers.custom_name || selectedItemForMultipliers.preset?.name || selectedItemForMultipliers.item_type?.name || 'Partida'}
+              </DialogTitle>
+              <DialogDescription>
+                Configura los multiplicadores que afectan el cálculo de esta partida
+              </DialogDescription>
+            </DialogHeader>
+            <MultiplierSection
+              multipliers={(selectedItemForMultipliers.multipliers || []) as CommissionItemMultiplier[]}
+              onAdd={() => setMultiplierModalOpen(true)}
+              onDelete={handleDeleteMultiplier}
+              disabled={!canEdit}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {selectedItemForMultipliers && (
+        <MultiplierModal
+          open={multiplierModalOpen}
+          onOpenChange={setMultiplierModalOpen}
+          schemeItems={items.map(i => ({
+            id: i.id,
+            custom_name: i.custom_name,
+            preset: i.preset ? { name: i.preset.name } : null,
+          }))}
+          onSubmit={handleAddMultiplier}
           isLoading={saving}
         />
       )}

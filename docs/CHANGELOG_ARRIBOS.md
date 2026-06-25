@@ -1,7 +1,7 @@
 # CHANGELOG - Módulo Registro de Arribos
 ## GridRetail
 
-**Última actualización:** 2026-01-28
+**Última actualización:** 2026-06-07
 
 ---
 
@@ -18,6 +18,76 @@
 ### Lógica de Negocio
 - [ ] Dashboard de tienda: vista de arribos vs ventas en tiempo real
 - [ ] Alertas cuando la conversión cae por debajo de umbral
+
+---
+
+## [2026-06-07] v1.3 - Fix Documentos, Hardening API, Hora Servidor y Reparación de Nombres con IA
+
+### Fix
+- ✅ 🔴 **Corregido constraint `arribos_dni_cliente_format_check`**: exigía exactamente 8 dígitos (`^\d{8}$`) para `dni_cliente`, lo que hacía **fallar el registro de documentos CE (9 dígitos) y OTRO**, ya que el formulario guarda esos documentos en la misma columna. Ahora el formato depende de `tipo_documento_cliente`. (Migración `027`)
+- ✅ 🔴 **Corregido token de json.pe**: `system_config.JSON_PE_TOKEN` tenía un token caducado que devolvía HTTP 401 ("Error de autenticación con API"). Actualizado al token válido. Verificado contra `api.json.pe/api/dni` (HTTP 200).
+
+### Base de Datos
+- ✅ Migración `027_fix_arribos_documento_constraint.sql` (EJECUTADA): reemplaza el CHECK rígido por uno dependiente del tipo de documento:
+  - `DNI` → exactamente 8 dígitos
+  - `CE` → exactamente 9 dígitos
+  - `OTRO` → cualquier valor no vacío
+  - `NULL` → siempre válido (cliente sin documento)
+
+### Backend
+- ✅ **Hardening de `/api/arribos` (POST)**: ahora valida el payload server-side con Zod (`arriboInsertSchema`) antes de insertar, devolviendo `400` con detalle de errores en lugar de un error de constraint de Postgres. No confía en el frontend.
+- ✅ **Lista blanca de columnas**: solo se insertan los campos validados, evitando que el cliente inyecte columnas arbitrarias (`id`, `created_at`, etc.).
+- ✅ **Fecha y hora autoritativas del servidor**: `fecha` y `hora` se calculan en el servidor en zona horaria `America/Lima` (UTC-5) vía `Intl.DateTimeFormat`, **ya no dependen del reloj del dispositivo del cliente**. La API ignora cualquier `fecha`/`hora` que envíe el cliente.
+
+### Nuevas Funcionalidades
+- ✅ **Reparación de nombres con IA**: json.pe entrega los nombres con el carácter `�` (U+FFFD) donde el origen tenía tildes, eñes o diéresis (corrupción irrecuperable en la fuente, confirmada inspeccionando los bytes `ef bf bd`). Se restauran con un modelo económico (Claude Haiku) vía la capa AI:
+  - Nuevo task type `REPARACION_NOMBRE` (tier `economy`) en `lib/ai/config.ts`.
+  - Solo se invoca a la IA si el nombre contiene `�` (cero costo en el caso común).
+  - **Salvaguarda anti-alucinación**: una máscara regex valida que el modelo solo reemplazó las posiciones del `�` por una letra especial española y no tocó ningún otro carácter; si la salida no cumple, se conserva el nombre original.
+  - Degrada de forma segura: si la IA está deshabilitada o falla, se devuelve el nombre original sin romper la consulta.
+  - Probado 12/12 casos OK (TOMÁS, MARTÍN, MUÑOZ, NÚÑEZ, CONCEPCIÓN, etc.).
+- ℹ️ **Nota de negocio**: RENIEC introdujo tildes solo en DNIs recientes; los DNIs antiguos vienen sin tilde (y sin `�`), por lo que correctamente **no** se modifican (no se inventan tildes donde el origen no las marca).
+
+### Archivos Creados/Modificados
+```
+supabase/migrations/027_fix_arribos_documento_constraint.sql  # Nuevo - fix constraint
+lib/arribos/validations.ts                                    # Nuevo - schema Zod server-side
+lib/ai/prompts/arribos/reparacion-nombre.ts                   # Nuevo - prompt + helper IA
+lib/ai/config.ts                                              # Mod - task type REPARACION_NOMBRE
+app/api/arribos/route.ts                                      # Mod - validación + fecha/hora servidor
+app/api/consulta-documento/route.ts                          # Mod - integración reparación IA
+app/(dashboard)/dashboard/arribos/nuevo/page.tsx             # Mod - deja de enviar fecha/hora
+```
+
+### SQL Ejecutado
+```sql
+-- Migración 027: constraint de documento dependiente del tipo
+ALTER TABLE public.arribos DROP CONSTRAINT IF EXISTS arribos_dni_cliente_format_check;
+
+ALTER TABLE public.arribos
+  ADD CONSTRAINT arribos_dni_cliente_format_check CHECK (
+    dni_cliente IS NULL
+    OR (tipo_documento_cliente = 'DNI'  AND dni_cliente ~ '^\d{8}$')
+    OR (tipo_documento_cliente = 'CE'   AND dni_cliente ~ '^\d{9}$')
+    OR (tipo_documento_cliente = 'OTRO' AND length(dni_cliente) > 0)
+  );
+
+-- Actualización del token de json.pe (vía REST/UI, no archivo de migración)
+UPDATE system_config SET value = '<token-valido>' WHERE key = 'JSON_PE_TOKEN';
+```
+
+### Notas sobre fecha/hora
+- `fecha` y `hora` reflejan la hora local de Perú (UTC-5), calculada por el servidor.
+- `created_at` permanece en UTC (`now()` de la BD), por eso difiere exactamente +5h respecto a `hora`. No es un error.
+
+### Configuración Requerida (capa IA)
+```
+# system_config debe tener configurada la capa AI:
+AI_ENABLED            = true
+AI_PROVIDER_DEFAULT   = anthropic
+AI_ANTHROPIC_API_KEY  = sk-ant-...
+AI_MODEL_ECONOMY      = claude-haiku-4-5-20251001
+```
 
 ---
 
@@ -205,6 +275,7 @@ Sin acceso: BACKOFFICE_RRHH, BACKOFFICE_AUDITORIA
 |----------|----------|-----|
 | json.pe | `api.json.pe/api/dni` | Consulta DNI (RENIEC) |
 | json.pe | `api.json.pe/api/cee` | Consulta CE (Migraciones) |
+| Anthropic | Claude Haiku (via capa AI) | Reparación de tildes/ñ/ü en nombres RENIEC (v1.3) |
 
 ---
 

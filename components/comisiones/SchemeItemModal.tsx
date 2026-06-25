@@ -25,6 +25,13 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
@@ -32,9 +39,21 @@ import { schemeItemFormSchema, type SchemeItemFormValues } from '@/lib/comisione
 import {
   type PartitionPreset,
   type TipoVenta,
+  type ContributionType,
+  type RangeSource,
+  type OvercomplianceMode,
+  type VariableSource,
   ITEM_CATEGORY_LABELS,
   type ItemCategory,
+  CONTRIBUTION_TYPE_LABELS,
+  CONTRIBUTION_TYPE_DESCRIPTIONS,
+  RANGE_SOURCE_LABELS,
+  OVERCOMPLIANCE_MODE_LABELS,
+  OVERCOMPLIANCE_MODE_DESCRIPTIONS,
+  VARIABLE_SOURCE_LABELS,
+  VARIABLE_SOURCE_DESCRIPTIONS,
 } from '@/lib/comisiones'
+import { AcceleratorRangesEditor } from '@/components/comisiones/AcceleratorRangesEditor'
 
 interface PresetWithVentas extends PartitionPreset {
   tipos_venta?: Array<{
@@ -56,9 +75,17 @@ interface SchemeItemModalProps {
   onSubmit: (values: SchemeItemFormValues) => Promise<void>
   isLoading?: boolean
   isEditing?: boolean
+  totalSSQuota?: number
+  variableSalary?: number
+  existingItems?: Array<{ id: string; quota?: number | null; weight?: number | null; mix_factor?: number | null }>
+  editingItemId?: string | null
 }
 
 type TabValue = 'agrupacion' | 'individual' | 'personalizado'
+
+const CONTRIBUTION_TYPES: ContributionType[] = ['PONDERADA', 'ACELERADOR', 'PXQ_INDEPENDIENTE', 'BONO']
+const RANGE_SOURCES: RangeSource[] = ['CUOTA_PROPIA', 'VOLUMEN_GLOBAL', 'CUOTA_GLOBAL_SS']
+const OVERCOMPLIANCE_MODES: OvercomplianceMode[] = ['none', 'proportional', 'pxq_bonus']
 
 export function SchemeItemModal({
   open,
@@ -69,9 +96,14 @@ export function SchemeItemModal({
   onSubmit,
   isLoading,
   isEditing,
+  totalSSQuota,
+  variableSalary,
+  existingItems,
+  editingItemId,
 }: SchemeItemModalProps) {
   const [selectedPreset, setSelectedPreset] = useState<PresetWithVentas | null>(null)
   const [activeTab, setActiveTab] = useState<TabValue>('agrupacion')
+  const [lastEdited, setLastEdited] = useState<'meta' | 'weight' | null>(null)
 
   const form = useForm<SchemeItemFormValues>({
     resolver: zodResolver(schemeItemFormSchema),
@@ -93,12 +125,128 @@ export function SchemeItemModal({
       is_active: true,
       display_order: 0,
       notes: null,
+      contribution_type: 'PONDERADA',
+      range_source: 'CUOTA_PROPIA',
+      uses_conversion_table: false,
+      accelerator_ranges: null,
+      measurement_type: 'UNIT_COUNT',
+      fulfillment_method: 'RATIO',
+      measurement_config: null,
+      overcompliance_mode: 'none',
+      cap_units: null,
+      pxq_bonus_amount: null,
+      overcap_max_units: null,
+      overcap_max_amount: null,
+      variable_source: 'FROM_MIX',
       ...defaultValues,
     },
   })
 
+  // Reset form when dialog opens with new defaultValues
+  useEffect(() => {
+    if (open) {
+      form.reset({
+        item_type_id: null,
+        preset_id: null,
+        custom_name: null,
+        custom_description: null,
+        tipos_venta_ids: [],
+        quota: null,
+        quota_amount: null,
+        weight: null,
+        mix_factor: null,
+        variable_amount: 0,
+        min_fulfillment: null,
+        has_cap: false,
+        cap_percentage: null,
+        cap_amount: null,
+        is_active: true,
+        display_order: 0,
+        notes: null,
+        contribution_type: 'PONDERADA',
+        range_source: 'CUOTA_PROPIA',
+        uses_conversion_table: false,
+        accelerator_ranges: null,
+        measurement_type: 'UNIT_COUNT',
+        fulfillment_method: 'RATIO',
+        measurement_config: null,
+        overcompliance_mode: 'none',
+        cap_units: null,
+        pxq_bonus_amount: null,
+        overcap_max_units: null,
+        overcap_max_amount: null,
+        variable_source: 'FROM_MIX',
+        ...defaultValues,
+      })
+      setLastEdited(null)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
   const hasCap = form.watch('has_cap')
   const tiposVentaIds = form.watch('tipos_venta_ids') || []
+  const contributionType = form.watch('contribution_type') as ContributionType
+  const overcomplianceMode = form.watch('overcompliance_mode') as OvercomplianceMode
+  const variableSource = form.watch('variable_source') as VariableSource
+
+  const watchedQuota = form.watch('quota')
+  const watchedWeight = form.watch('weight')
+  const watchedMixFactor = form.watch('mix_factor')
+
+  // Determinar categoría de la partida para cálculos (antes de los useEffects que la necesitan)
+  const isCustomModeCalc = activeTab === 'personalizado'
+  const categoryForCalc: ItemCategory | null = selectedPreset?.default_category as ItemCategory
+    || (isCustomModeCalc ? 'adicional' : null)
+    || (isEditing && defaultValues ? (defaultValues as { category?: ItemCategory }).category || 'adicional' : null)
+
+  // Partidas Principal + PONDERADA: tienen Meta, Peso, Mix
+  const isPrincipalPonderadaCalc = contributionType === 'PONDERADA' && categoryForCalc === 'principal'
+
+  // Partidas Adicional + PONDERADA con FROM_MIX: tienen Mix (sin Meta/Peso)
+  const isAdicionalFromMixCalc = contributionType === 'PONDERADA' && categoryForCalc === 'adicional' && variableSource === 'FROM_MIX'
+
+  // ¿Mostrar Mix Factor? Principal PONDERADA o Adicional PONDERADA con FROM_MIX
+  const showMixFactorCalc = isPrincipalPonderadaCalc || isAdicionalFromMixCalc
+
+  // CHG-03: Bidirectional Meta <-> Weight link (PONDERADA Principal only)
+  useEffect(() => {
+    if (!isPrincipalPonderadaCalc || !totalSSQuota) return
+    if (lastEdited === 'meta' && watchedQuota != null) {
+      const newWeight = watchedQuota / totalSSQuota
+      const currentWeight = form.getValues('weight')
+      if (currentWeight !== newWeight) {
+        form.setValue('weight', newWeight)
+      }
+    }
+  }, [watchedQuota, lastEdited, isPrincipalPonderadaCalc, totalSSQuota, form])
+
+  useEffect(() => {
+    if (!isPrincipalPonderadaCalc || !totalSSQuota) return
+    if (lastEdited === 'weight' && watchedWeight != null) {
+      const newMeta = Math.ceil(watchedWeight * totalSSQuota)
+      const currentMeta = form.getValues('quota')
+      if (currentMeta !== newMeta) {
+        form.setValue('quota', newMeta)
+      }
+    }
+  }, [watchedWeight, lastEdited, isPrincipalPonderadaCalc, totalSSQuota, form])
+
+  // CHG-05/CHG-06: Auto-calculate variable_amount from mix_factor (PONDERADA con Mix)
+  useEffect(() => {
+    if (!showMixFactorCalc || variableSalary == null) return
+    if (watchedMixFactor != null) {
+      form.setValue('variable_amount', Math.round(watchedMixFactor * variableSalary * 100) / 100)
+    }
+  }, [watchedMixFactor, showMixFactorCalc, variableSalary, form])
+
+  // CHG-07: Cross-validation availability
+  const otherItems = (existingItems || []).filter(i => i.id !== editingItemId)
+  const usedMeta = otherItems.reduce((sum, i) => sum + (i.quota || 0), 0)
+  const usedWeight = otherItems.reduce((sum, i) => sum + (i.weight || 0), 0)
+  const usedMix = otherItems.reduce((sum, i) => sum + (i.mix_factor || 0), 0)
+  const metaAvailable = (totalSSQuota || 0) - usedMeta
+  const weightAvailable = (1 - usedWeight) * 100
+  const mixAvailable = (1 - usedMix) * 100
 
   // Agrupar presets por grupo
   const agrupaciones = presets.filter(p => p.preset_group === 'agrupacion')
@@ -119,14 +267,13 @@ export function SchemeItemModal({
   const sortedCategories = Object.entries(tiposVentaGrouped).sort(([a], [b]) => {
     const indexA = CATEGORIA_ORDER.indexOf(a)
     const indexB = CATEGORIA_ORDER.indexOf(b)
-    // Si no está en la lista, ponerlo al final
     const orderA = indexA === -1 ? CATEGORIA_ORDER.length : indexA
     const orderB = indexB === -1 ? CATEGORIA_ORDER.length : indexB
     return orderA - orderB
   })
 
-  // Determinar si estamos en modo personalizado
-  const isCustomMode = activeTab === 'personalizado'
+  // Usar alias para isCustomMode (ya calculado arriba como isCustomModeCalc)
+  const isCustomMode = isCustomModeCalc
 
   // Cuando se selecciona un preset, aplicar sus tipos de venta
   useEffect(() => {
@@ -134,7 +281,6 @@ export function SchemeItemModal({
       form.setValue('preset_id', selectedPreset.id)
       form.setValue('custom_name', selectedPreset.name)
 
-      // Aplicar tipos de venta del preset
       const presetVentas = selectedPreset.tipos_venta?.map(tv => ({
         tipo_venta_id: tv.tipo_venta_id,
         cuenta_linea: tv.cuenta_linea,
@@ -168,7 +314,6 @@ export function SchemeItemModal({
       form.setValue('custom_name', null)
       form.setValue('tipos_venta_ids', [])
     } else {
-      // Si cambia a otro tab, limpiar selección previa
       setSelectedPreset(null)
       form.setValue('preset_id', null)
       form.setValue('custom_name', null)
@@ -178,7 +323,6 @@ export function SchemeItemModal({
 
   const handlePresetSelect = (preset: PresetWithVentas) => {
     if (selectedPreset?.id === preset.id) {
-      // Deseleccionar si ya estaba seleccionado
       setSelectedPreset(null)
       form.setValue('preset_id', null)
       form.setValue('custom_name', null)
@@ -195,7 +339,6 @@ export function SchemeItemModal({
     if (existing) {
       form.setValue('tipos_venta_ids', current.filter(tv => tv.tipo_venta_id !== tipoVentaId))
     } else {
-      // Determinar valores por defecto basados en el tipo de venta
       const isPack = tipoVenta.categoria === 'PACK'
       form.setValue('tipos_venta_ids', [
         ...current,
@@ -212,6 +355,34 @@ export function SchemeItemModal({
     return tiposVentaIds?.some(tv => tv.tipo_venta_id === tipoVentaId) || false
   }
 
+  const handleContributionTypeChange = (newType: ContributionType) => {
+    form.setValue('contribution_type', newType)
+    // Auto-set sensible defaults per type
+    switch (newType) {
+      case 'PONDERADA':
+        form.setValue('weight', null)
+        form.setValue('mix_factor', null)
+        form.setValue('accelerator_ranges', null)
+        break
+      case 'ACELERADOR':
+        form.setValue('weight', null)
+        form.setValue('mix_factor', null)
+        form.setValue('range_source', 'CUOTA_PROPIA')
+        break
+      case 'PXQ_INDEPENDIENTE':
+        form.setValue('weight', null)
+        form.setValue('mix_factor', null)
+        form.setValue('accelerator_ranges', null)
+        break
+      case 'BONO':
+        form.setValue('weight', null)
+        form.setValue('mix_factor', null)
+        form.setValue('quota', null)
+        form.setValue('accelerator_ranges', null)
+        break
+    }
+  }
+
   const handleSubmit = async (values: SchemeItemFormValues) => {
     await onSubmit(values)
     form.reset()
@@ -226,9 +397,14 @@ export function SchemeItemModal({
     form.reset()
   }
 
-  // Determinar categoría para mostrar campos específicos
-  const category: ItemCategory | null = selectedPreset?.default_category ||
-    (isCustomMode ? 'adicional' : null)
+  // Usar alias para category y campos calculados (ya calculados arriba)
+  const category = categoryForCalc
+  const isPrincipalPonderada = isPrincipalPonderadaCalc
+  const isAdicionalFromMix = isAdicionalFromMixCalc
+  const showMixFactor = showMixFactorCalc
+
+  // Es Adicional PONDERADA (muestra selector de variable_source)
+  const isAdicionalPonderada = contributionType === 'PONDERADA' && categoryForCalc === 'adicional'
 
   // Determinar si mostrar los campos de configuración
   const showConfigFields = isCustomMode || selectedPreset || isEditing
@@ -321,6 +497,43 @@ export function SchemeItemModal({
                   />
                 )}
 
+                {/* Tipo de Contribución */}
+                {showConfigFields && (
+                  <FormField
+                    control={form.control}
+                    name="contribution_type"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-base">Tipo de Contribución</FormLabel>
+                        <FormDescription>
+                          Define cómo esta partida aporta al cálculo de comisión
+                        </FormDescription>
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          {CONTRIBUTION_TYPES.map((type) => (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() => handleContributionTypeChange(type)}
+                              className={cn(
+                                "flex flex-col items-start p-3 rounded-lg border text-left text-sm transition-colors",
+                                field.value === type
+                                  ? "border-primary bg-primary/5 ring-1 ring-primary"
+                                  : "border-border hover:border-primary/50 hover:bg-muted/50"
+                              )}
+                            >
+                              <span className="font-medium">{CONTRIBUTION_TYPE_LABELS[type]}</span>
+                              <span className="text-xs text-muted-foreground mt-0.5">
+                                {CONTRIBUTION_TYPE_DESCRIPTIONS[type]}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
                 {/* Tipos de Venta */}
                 {showConfigFields && (
                   <div className="space-y-3">
@@ -362,79 +575,198 @@ export function SchemeItemModal({
                   </div>
                 )}
 
+                {/* Fuente del Variable (solo para Adicional PONDERADA) */}
+                {showConfigFields && isAdicionalPonderada && (
+                  <FormField
+                    control={form.control}
+                    name="variable_source"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-base">Fuente del Variable</FormLabel>
+                        <FormDescription>
+                          Define si el monto variable forma parte del mix teórico o es un monto adicional
+                        </FormDescription>
+                        <div className="flex gap-2 pt-1">
+                          {(['FROM_MIX', 'FIXED_EXTRA'] as VariableSource[]).map((source) => (
+                            <button
+                              key={source}
+                              type="button"
+                              onClick={() => field.onChange(source)}
+                              className={cn(
+                                "flex-1 flex flex-col items-start p-3 rounded-lg border text-left text-sm transition-colors",
+                                field.value === source
+                                  ? "border-primary bg-primary/5 ring-1 ring-primary"
+                                  : "border-border hover:border-primary/50 hover:bg-muted/50"
+                              )}
+                            >
+                              <span className="font-medium">{VARIABLE_SOURCE_LABELS[source]}</span>
+                              <span className="text-xs text-muted-foreground mt-0.5">
+                                {VARIABLE_SOURCE_DESCRIPTIONS[source]}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
                 {/* Configuración de Meta */}
                 {showConfigFields && (
                   <div className="space-y-4">
                     <h4 className="font-medium text-sm">Configuración de Meta</h4>
                     <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="quota"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Meta (unidades)</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                step="0.1"
-                                placeholder="Ej: 31.5"
-                                value={field.value ?? ''}
-                                onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : null)}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                      {/* Meta (unidades) - show for PONDERADA, ACELERADOR, PXQ_INDEPENDIENTE but not BONO */}
+                      {contributionType !== 'BONO' && (
+                        <FormField
+                          control={form.control}
+                          name="quota"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Meta (unidades)</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="1"
+                                  placeholder="Ej: 32"
+                                  value={field.value ?? ''}
+                                  onChange={(e) => {
+                                    if (contributionType === 'PONDERADA') setLastEdited('meta')
+                                    field.onChange(e.target.value ? Math.ceil(parseFloat(e.target.value)) : null)
+                                  }}
+                                />
+                              </FormControl>
+                              {isPrincipalPonderada && totalSSQuota != null && (
+                                <FormDescription>
+                                  Disponible: {metaAvailable} de {totalSSQuota}
+                                </FormDescription>
+                              )}
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
 
-                      {category === 'principal' && (
+                      {/* Weight - only for PONDERADA + Principal (not Adicional) */}
+                      {isPrincipalPonderada && (
                         <FormField
                           control={form.control}
                           name="weight"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Peso (% del variable)</FormLabel>
+                              <FormLabel>Peso (% de la cuota total)</FormLabel>
+                              <FormControl>
+                                <div className="relative">
+                                  <Input
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    max="100"
+                                    placeholder="Ej: 45"
+                                    className="pr-8"
+                                    value={field.value != null ? Math.round(field.value * 100) : ''}
+                                    onChange={(e) => {
+                                      setLastEdited('weight')
+                                      field.onChange(e.target.value ? parseFloat(e.target.value) / 100 : null)
+                                    }}
+                                  />
+                                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">%</span>
+                                </div>
+                              </FormControl>
+                              <FormDescription>
+                                Disponible: {weightAvailable.toFixed(1)}% de 100%
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+
+                      {/* Mix Factor - for PONDERADA (Principal or Adicional con FROM_MIX) */}
+                      {showMixFactor && (
+                        <FormField
+                          control={form.control}
+                          name="mix_factor"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Factor Mix (%)</FormLabel>
                               <FormControl>
                                 <Input
                                   type="number"
                                   step="1"
                                   min="0"
                                   max="100"
-                                  placeholder="Ej: 45"
+                                  placeholder="Ej: 27"
                                   value={field.value ? (field.value * 100) : ''}
                                   onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) / 100 : null)}
                                 />
                               </FormControl>
-                              <FormDescription>Porcentaje del sueldo variable</FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      {category === 'principal' && (
-                        <FormField
-                          control={form.control}
-                          name="mix_factor"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Factor Mix</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  placeholder="Ej: 0.27"
-                                  value={field.value ?? ''}
-                                  onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : null)}
-                                />
-                              </FormControl>
-                              <FormDescription>Para cálculo de subpartidas</FormDescription>
+                              <FormDescription>
+                                Disponible: {mixAvailable.toFixed(1)}% de 100%
+                              </FormDescription>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
                       )}
                     </div>
+
+                    {isPrincipalPonderada && totalSSQuota != null && (
+                      <p className="text-xs text-muted-foreground italic">
+                        Meta y Peso están vinculados. Al modificar uno, el otro se recalcula.
+                      </p>
+                    )}
+
+                    {/* Acelerador: range_source + accelerator_ranges */}
+                    {contributionType === 'ACELERADOR' && (
+                      <div className="space-y-4">
+                        <FormField
+                          control={form.control}
+                          name="range_source"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Fuente de Rango</FormLabel>
+                              <Select
+                                value={field.value ?? 'CUOTA_PROPIA'}
+                                onValueChange={field.onChange}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Selecciona fuente" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {RANGE_SOURCES.map((src) => (
+                                    <SelectItem key={src} value={src}>
+                                      {RANGE_SOURCE_LABELS[src]}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="accelerator_ranges"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Rangos del Acelerador</FormLabel>
+                              <FormControl>
+                                <AcceleratorRangesEditor
+                                  value={field.value}
+                                  onChange={field.onChange}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -448,7 +780,9 @@ export function SchemeItemModal({
                         name="variable_amount"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Variable máximo (S/.)</FormLabel>
+                            <FormLabel>
+                              {contributionType === 'BONO' ? 'Monto del bono (S/.)' : contributionType === 'PONDERADA' ? 'Variable S/.' : 'Variable máximo (S/.)'}
+                            </FormLabel>
                             <FormControl>
                               <Input
                                 type="number"
@@ -457,8 +791,15 @@ export function SchemeItemModal({
                                 placeholder="Ej: 324.00"
                                 {...field}
                                 onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                readOnly={showMixFactor && variableSalary != null}
+                                className={showMixFactor && variableSalary != null ? 'bg-muted' : ''}
                               />
                             </FormControl>
+                            {showMixFactor && variableSalary != null && watchedMixFactor != null && (
+                              <FormDescription>
+                                = {((watchedMixFactor || 0) * 100).toFixed(0)}% × S/ {variableSalary}
+                              </FormDescription>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}
@@ -490,47 +831,133 @@ export function SchemeItemModal({
                   </div>
                 )}
 
-                {/* Tope */}
+                {/* Usa tabla de conversión */}
+                {showConfigFields && (
+                  <FormField
+                    control={form.control}
+                    name="uses_conversion_table"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value ?? false}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                        <div className="space-y-1 leading-none">
+                          <FormLabel>Usa tabla de conversión del esquema</FormLabel>
+                          <FormDescription>
+                            Aplica la tabla de conversión definida en el esquema para esta partida
+                          </FormDescription>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                {/* Sobrecumplimiento */}
                 {showConfigFields && (
                   <div className="space-y-4">
                     <FormField
                       control={form.control}
-                      name="has_cap"
+                      name="overcompliance_mode"
                       render={({ field }) => (
-                        <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                          <FormControl>
-                            <Checkbox
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                            />
-                          </FormControl>
-                          <div className="space-y-1 leading-none">
-                            <FormLabel>Tiene tope máximo</FormLabel>
-                            <FormDescription>
-                              Limita el porcentaje o monto máximo comisionable
-                            </FormDescription>
+                        <FormItem>
+                          <FormLabel className="text-base">Sobrecumplimiento</FormLabel>
+                          <FormDescription>
+                            Define qué sucede cuando se supera la meta
+                          </FormDescription>
+                          <div className="flex gap-2 pt-1">
+                            {OVERCOMPLIANCE_MODES.map((mode) => (
+                              <button
+                                key={mode}
+                                type="button"
+                                onClick={() => field.onChange(mode)}
+                                className={cn(
+                                  "flex-1 flex flex-col items-start p-3 rounded-lg border text-left text-sm transition-colors",
+                                  field.value === mode
+                                    ? "border-primary bg-primary/5 ring-1 ring-primary"
+                                    : "border-border hover:border-primary/50 hover:bg-muted/50"
+                                )}
+                              >
+                                <span className="font-medium">{OVERCOMPLIANCE_MODE_LABELS[mode]}</span>
+                                <span className="text-xs text-muted-foreground mt-0.5">
+                                  {OVERCOMPLIANCE_MODE_DESCRIPTIONS[mode]}
+                                </span>
+                              </button>
+                            ))}
                           </div>
+                          <FormMessage />
                         </FormItem>
                       )}
                     />
 
-                    {hasCap && (
-                      <div className="grid grid-cols-2 gap-4 pl-7">
+                    {/* Proporcional fields */}
+                    {overcomplianceMode === 'proportional' && (
+                      <div className="grid grid-cols-2 gap-4 pl-1">
                         <FormField
                           control={form.control}
-                          name="cap_percentage"
+                          name="cap_units"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Porcentaje tope (%)</FormLabel>
+                              <FormLabel>Tope máximo unidades</FormLabel>
                               <FormControl>
                                 <Input
                                   type="number"
                                   step="1"
                                   min="0"
-                                  max="200"
-                                  placeholder="Ej: 100"
-                                  value={field.value ? (field.value * 100) : ''}
-                                  onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) / 100 : null)}
+                                  placeholder="Ej: 50"
+                                  value={field.value ?? ''}
+                                  onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : null)}
+                                />
+                              </FormControl>
+                              <FormDescription>Máximo de unidades comisionables</FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="overcap_max_amount"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Monto máximo (S/.)</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  placeholder="Opcional"
+                                  value={field.value ?? ''}
+                                  onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : null)}
+                                />
+                              </FormControl>
+                              <FormDescription>Tope de monto por sobrecumplimiento</FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
+
+                    {/* PxQ Bonus fields */}
+                    {overcomplianceMode === 'pxq_bonus' && (
+                      <div className="grid grid-cols-3 gap-4 pl-1">
+                        <FormField
+                          control={form.control}
+                          name="pxq_bonus_amount"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Monto por unidad extra (S/.)</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  placeholder="Ej: 15.00"
+                                  value={field.value ?? ''}
+                                  onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : null)}
                                 />
                               </FormControl>
                               <FormMessage />
@@ -540,10 +967,31 @@ export function SchemeItemModal({
 
                         <FormField
                           control={form.control}
-                          name="cap_amount"
+                          name="overcap_max_units"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Monto tope (S/.)</FormLabel>
+                              <FormLabel>Máx unidades extra</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="1"
+                                  min="0"
+                                  placeholder="Opcional"
+                                  value={field.value ?? ''}
+                                  onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : null)}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="overcap_max_amount"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Monto máximo extra (S/.)</FormLabel>
                               <FormControl>
                                 <Input
                                   type="number"
@@ -559,6 +1007,79 @@ export function SchemeItemModal({
                           )}
                         />
                       </div>
+                    )}
+
+                    {/* Legacy cap fields - only when overcompliance_mode is 'none' */}
+                    {overcomplianceMode === 'none' && (
+                      <>
+                        <FormField
+                          control={form.control}
+                          name="has_cap"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                              <FormControl>
+                                <Checkbox
+                                  checked={field.value}
+                                  onCheckedChange={field.onChange}
+                                />
+                              </FormControl>
+                              <div className="space-y-1 leading-none">
+                                <FormLabel>Tiene tope máximo</FormLabel>
+                                <FormDescription>
+                                  Limita el porcentaje o monto máximo comisionable
+                                </FormDescription>
+                              </div>
+                            </FormItem>
+                          )}
+                        />
+
+                        {hasCap && (
+                          <div className="grid grid-cols-2 gap-4 pl-7">
+                            <FormField
+                              control={form.control}
+                              name="cap_percentage"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Porcentaje tope (%)</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      step="1"
+                                      min="0"
+                                      max="200"
+                                      placeholder="Ej: 100"
+                                      value={field.value ? (field.value * 100) : ''}
+                                      onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) / 100 : null)}
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name="cap_amount"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Monto tope (S/.)</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      placeholder="Opcional"
+                                      value={field.value ?? ''}
+                                      onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : null)}
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}

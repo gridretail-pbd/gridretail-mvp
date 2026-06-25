@@ -116,25 +116,21 @@ export function SalesInputTable({
                         {quota > 0 ? formatSalesQuantity(quota) : '-'}
                       </TableCell>
                       <TableCell className="text-right">
-                        {quota > 0 ? (
-                          readOnly ? (
-                            <span className="tabular-nums font-medium">
-                              {formatSalesQuantity(sales)}
-                            </span>
-                          ) : (
-                            <Input
-                              type="number"
-                              min={0}
-                              step={quota >= 10 ? 1 : 0.1}
-                              value={sales}
-                              onChange={(e) =>
-                                onSalesChange(itemName, parseFloat(e.target.value) || 0)
-                              }
-                              className="w-20 text-right h-8 tabular-nums"
-                            />
-                          )
+                        {readOnly ? (
+                          <span className="tabular-nums font-medium">
+                            {quota > 0 ? formatSalesQuantity(sales) : '-'}
+                          </span>
                         ) : (
-                          '-'
+                          <Input
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={sales}
+                            onChange={(e) =>
+                              onSalesChange(itemName, Math.round(parseFloat(e.target.value)) || 0)
+                            }
+                            className="w-20 text-right h-8 tabular-nums"
+                          />
                         )}
                       </TableCell>
                       <TableCell className="text-right">

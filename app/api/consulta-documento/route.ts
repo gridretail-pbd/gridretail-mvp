@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import {
+  repararNombresRENIEC,
+  REPLACEMENT_CHAR,
+} from '@/lib/ai/prompts/arribos/reparacion-nombre'
 
 // Cliente de Supabase con service_role para acceder a system_config
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -173,11 +177,31 @@ export async function GET(request: NextRequest) {
     
     if (responseData && responseData.success && responseData.data) {
       const personData = responseData.data
-      
+
       // Extraer campos (json.pe usa snake_case)
-      const nombres = personData.nombres || personData.nombre || ''
-      const apellidoPaterno = personData.apellido_paterno || personData.apellidoPaterno || ''
-      const apellidoMaterno = personData.apellido_materno || personData.apellidoMaterno || ''
+      let nombres = personData.nombres || personData.nombre || ''
+      let apellidoPaterno = personData.apellido_paterno || personData.apellidoPaterno || ''
+      let apellidoMaterno = personData.apellido_materno || personData.apellidoMaterno || ''
+
+      // json.pe entrega los nombres con '�' donde había tildes/ñ/ü. La letra
+      // original es irrecuperable desde la respuesta, así que la restauramos
+      // con un modelo económico (solo si hay '�' y supabaseAdmin disponible).
+      // Degrada de forma segura: ante cualquier fallo conserva el valor con '�'.
+      const tieneCaracterDanado =
+        nombres.includes(REPLACEMENT_CHAR) ||
+        apellidoPaterno.includes(REPLACEMENT_CHAR) ||
+        apellidoMaterno.includes(REPLACEMENT_CHAR)
+
+      if (tieneCaracterDanado && supabaseAdmin) {
+        const reparado = await repararNombresRENIEC(supabaseAdmin, {
+          nombres,
+          apellido_paterno: apellidoPaterno,
+          apellido_materno: apellidoMaterno,
+        })
+        nombres = reparado.nombres
+        apellidoPaterno = reparado.apellido_paterno
+        apellidoMaterno = reparado.apellido_materno
+      }
 
       if (nombres) {
         return NextResponse.json({

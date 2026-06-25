@@ -16,6 +16,7 @@ import { PROFILE_MULTIPLIERS } from './types'
  * Genera datos de venta basados en un perfil predefinido
  * Aplica el multiplicador del perfil a cada meta de partida
  * v1.2: Prioriza cuota de hc_quotas sobre la del esquema
+ * v2.0: Siempre genera entradas para todos los items activos (incluso sin cuota)
  */
 export function generateSalesProfile(
   schemeItems: SchemeItemWithMapping[],
@@ -31,7 +32,8 @@ export function generateSalesProfile(
     const itemName = getEffectiveItemName(item)
 
     // v1.2: Obtener cuota efectiva (priorizar hc_quotas)
-    let effectiveQuota: number
+    let effectiveQuota: number | null = null
+
     if (hcQuota?.has_quota && hcQuota.effective_breakdown[itemName]) {
       // Usar cuota del módulo Cuotas (ya incluye prorrateo)
       effectiveQuota = hcQuota.effective_breakdown[itemName]
@@ -41,16 +43,18 @@ export function generateSalesProfile(
     } else if (item.quota !== null && item.quota > 0) {
       // Fallback: usar cuota del esquema
       effectiveQuota = item.quota
-    } else {
-      continue // Sin cuota definida
     }
 
-    // Aplicar multiplicador del perfil
-    const rawValue = effectiveQuota * multiplier
-    // Redondear a entero o a 1 decimal según el tamaño de la cuota
-    salesData[itemName] = effectiveQuota >= 10
-      ? Math.round(rawValue)
-      : Math.round(rawValue * 10) / 10
+    // v2.0: Siempre agregar item al salesData, incluso sin cuota
+    if (effectiveQuota !== null && effectiveQuota > 0) {
+      // Aplicar multiplicador del perfil y redondear a entero
+      // Las ventas son siempre unidades enteras (líneas, equipos, etc.)
+      const rawValue = effectiveQuota * multiplier
+      salesData[itemName] = Math.round(rawValue)
+    } else {
+      // Item sin cuota: inicializar en 0 para que aparezca en la UI
+      salesData[itemName] = 0
+    }
   }
 
   return salesData
@@ -92,19 +96,35 @@ export function getShortName(item: SchemeItemWithMapping): string {
 
 /**
  * Obtiene la categoría efectiva de la partida
+ * Prioridad según DATA_DICTIONARY:
+ * 1. Campo derivado (si ya se calculó en hooks.ts)
+ * 2. preset.default_category
+ * 3. item_type.category
+ * 4. Default 'adicional'
  */
 export function getEffectiveCategory(item: SchemeItemWithMapping): string {
-  return item.item_type?.category
-    || item.preset?.default_category
+  // Si ya tenemos el campo derivado, usarlo
+  if (item.category) return item.category
+  // Prioridad: preset > item_type > default
+  return item.preset?.default_category
+    || item.item_type?.category
     || 'adicional'
 }
 
 /**
  * Obtiene el tipo de cálculo efectivo de la partida
+ * Prioridad según DATA_DICTIONARY:
+ * 1. Campo derivado (si ya se calculó en hooks.ts)
+ * 2. preset.default_calculation_type
+ * 3. item_type.calculation_type
+ * 4. Default 'percentage'
  */
 export function getEffectiveCalculationType(item: SchemeItemWithMapping): string {
-  return item.item_type?.calculation_type
-    || item.preset?.default_calculation_type
+  // Si ya tenemos el campo derivado, usarlo
+  if (item.calculation_type) return item.calculation_type
+  // Prioridad: preset > item_type > default
+  return item.preset?.default_calculation_type
+    || item.item_type?.calculation_type
     || 'percentage'
 }
 

@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod'
-import { format } from 'date-fns'
 import { getUsuarioFromLocalStorage, getTiendaActiva } from '@/lib/auth-client'
 import { Button } from '@/components/ui/button'
 import {
@@ -32,7 +31,18 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Loader2, Store } from 'lucide-react'
+import { toast } from 'sonner'
 import { Usuario } from '@/types'
 
 // Tipo para tienda activa (del localStorage)
@@ -43,22 +53,30 @@ interface TiendaActiva {
   zona?: string
 }
 
-// Tipos de documento
+// Tipos de documento (alineados con el constraint de BD migración 029).
+// json.pe solo autocompleta DNI y CE; RUC/PASAPORTE/PTP/OTRO son manuales.
 const TIPOS_DOCUMENTO = [
   { value: 'NO_PROPORCIONADO', label: 'No lo dio' },
   { value: 'DNI', label: 'DNI' },
   { value: 'CE', label: 'Carné de Extranjería' },
+  { value: 'RUC', label: 'RUC' },
+  { value: 'PASAPORTE', label: 'Pasaporte' },
+  { value: 'PTP', label: 'PTP' },
   { value: 'OTRO', label: 'Otro' },
 ] as const
 
 type TipoDocumento = (typeof TIPOS_DOCUMENTO)[number]['value']
 
+// Solo números para estos tipos; PASAPORTE/PTP/OTRO admiten alfanumérico.
+const SOLO_DIGITOS: TipoDocumento[] = ['DNI', 'CE', 'RUC']
+
 // Schema con validación estricta - campos obligatorios NO pueden estar vacíos
 const arriboSchema = z
   .object({
-    tipo_documento: z.enum(['NO_PROPORCIONADO', 'DNI', 'CE', 'OTRO'], {
-      message: 'Selecciona el tipo de documento',
-    }),
+    tipo_documento: z.enum(
+      ['NO_PROPORCIONADO', 'DNI', 'CE', 'RUC', 'PASAPORTE', 'PTP', 'OTRO'],
+      { message: 'Selecciona el tipo de documento' }
+    ),
     numero_documento: z.string().optional(),
     es_cliente_entel: z.enum(['SI', 'NO', 'NO_SABE'], {
       message: 'Indica si es cliente Entel',
@@ -74,18 +92,28 @@ const arriboSchema = z
   })
   .refine(
     (data) => {
-      // Validar número de documento según tipo
-      if (data.tipo_documento === 'DNI') {
-        return data.numero_documento && /^\d{8}$/.test(data.numero_documento)
+      // Validar número de documento según tipo (espejo del constraint de BD).
+      const n = data.numero_documento
+      switch (data.tipo_documento) {
+        case 'DNI':
+          return !!n && /^\d{8}$/.test(n)
+        case 'CE':
+          return !!n && /^\d{9}$/.test(n)
+        case 'RUC':
+          return !!n && /^(10|20)\d{9}$/.test(n)
+        case 'PASAPORTE':
+          return !!n && /^[A-Z0-9]{6,12}$/i.test(n)
+        case 'PTP':
+          return !!n && /^[A-Z0-9]{6,15}$/i.test(n)
+        case 'OTRO':
+          return !!n && n.length > 0
+        // NO_PROPORCIONADO no requiere número
+        default:
+          return true
       }
-      if (data.tipo_documento === 'CE') {
-        return data.numero_documento && /^\d{9}$/.test(data.numero_documento)
-      }
-      // OTRO y NO_PROPORCIONADO no requieren validación estricta
-      return true
     },
     {
-      message: 'Número de documento inválido',
+      message: 'Número de documento inválido para el tipo seleccionado',
       path: ['numero_documento'],
     }
   )
@@ -128,6 +156,21 @@ const motivosNoVenta = [
   { value: 'OTRO', label: 'Otro' },
 ]
 
+// Payload que se envía a POST /api/arribos (lista blanca server-side).
+interface ArriboPayload {
+  tienda_id: string
+  usuario_id: string
+  registrado_por: string
+  tipo_documento_cliente: string | null
+  dni_cliente: string | null
+  nombre_cliente: string | null
+  es_cliente_entel: boolean | null
+  tipo_visita: 'VENTA' | 'POSVENTA'
+  concreto_operacion: boolean
+  se_vendio: boolean | null
+  motivo_no_venta: string | null
+}
+
 // Tipo para la respuesta de la API de documento
 interface DocumentoApiResponse {
   success: boolean
@@ -146,6 +189,8 @@ export default function NuevoArriboPage() {
   const [tiendaActiva, setTiendaActiva] = useState<TiendaActiva | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isSuccess, setIsSuccess] = useState(false)
+  // Payload validado en espera de decisión del diálogo "¿Registrar la venta ahora?"
+  const [pendingArribo, setPendingArribo] = useState<ArriboPayload | null>(null)
 
   // Estados para la consulta de documento
   const [nombreCliente, setNombreCliente] = useState<string>('')
@@ -174,18 +219,27 @@ export default function NuevoArriboPage() {
   const tipoDocumento = form.watch('tipo_documento')
   const numeroDocumento = form.watch('numero_documento')
 
-  // Determinar si mostrar campo de número
+  // Mostrar campo de número para todos los tipos salvo "No lo dio".
   const mostrarNumeroDocumento =
-    tipoDocumento === 'DNI' ||
-    tipoDocumento === 'CE' ||
-    tipoDocumento === 'OTRO'
+    !!tipoDocumento && tipoDocumento !== 'NO_PROPORCIONADO'
 
-  // Determinar si mostrar campo de nombre (solo para DNI y CE)
+  // El nombre se autocompleta (json.pe) solo para DNI y CE.
   const mostrarNombreCliente =
     tipoDocumento === 'DNI' || tipoDocumento === 'CE'
 
-  // Determinar longitud esperada del documento
-  const longitudDocumento = tipoDocumento === 'DNI' ? 8 : tipoDocumento === 'CE' ? 9 : undefined
+  // Longitud máxima del input por tipo.
+  const longitudDocumento =
+    tipoDocumento === 'DNI'
+      ? 8
+      : tipoDocumento === 'CE'
+        ? 9
+        : tipoDocumento === 'RUC'
+          ? 11
+          : tipoDocumento === 'PASAPORTE'
+            ? 12
+            : tipoDocumento === 'PTP'
+              ? 15
+              : 20
 
   // Función para consultar documento
   const consultarDocumento = useCallback(
@@ -295,80 +349,98 @@ export default function NuevoArriboPage() {
     }
   }, [router])
 
-  async function onSubmit(values: ArriboFormValues) {
-    if (!user || !tiendaActiva) {
-      alert('No se pudo obtener la información del usuario o tienda')
-      return
+  // Construye el payload de BD a partir de los valores del formulario.
+  function construirPayload(values: ArriboFormValues): ArriboPayload {
+    const esClienteEntel =
+      values.es_cliente_entel === 'SI'
+        ? true
+        : values.es_cliente_entel === 'NO'
+          ? false
+          : null
+
+    return {
+      // fecha y hora las fija el servidor (zona America/Lima), no el cliente.
+      tienda_id: tiendaActiva!.id,
+      usuario_id: user!.id,
+      registrado_por: user!.id,
+      tipo_documento_cliente:
+        values.tipo_documento === 'NO_PROPORCIONADO'
+          ? null
+          : values.tipo_documento,
+      dni_cliente:
+        values.tipo_documento === 'NO_PROPORCIONADO'
+          ? null
+          : values.numero_documento || null,
+      nombre_cliente: nombreCliente || null,
+      es_cliente_entel: esClienteEntel,
+      tipo_visita: values.tipo_visita,
+      concreto_operacion: values.concreto_operacion === 'SI',
+      se_vendio:
+        values.tipo_visita === 'VENTA' ? values.se_vendio === 'SI' : null,
+      motivo_no_venta:
+        values.tipo_visita === 'VENTA' && values.se_vendio === 'NO'
+          ? values.motivo_no_venta || null
+          : null,
     }
+  }
 
+  // Guarda el arribo. Si irAVenta, navega al form de venta con el arribo_id
+  // (Camino A); el backend deriva resultado = VENTA_DECLARADA_PENDIENTE.
+  async function guardarArribo(
+    payload: ArriboPayload,
+    { irAVenta }: { irAVenta: boolean }
+  ) {
     setIsLoading(true)
-
     try {
-      const now = new Date()
-
-      // Convertir valores del formulario a valores de BD
-      const esClienteEntel =
-        values.es_cliente_entel === 'SI'
-          ? true
-          : values.es_cliente_entel === 'NO'
-            ? false
-            : null
-
-      const payload = {
-        fecha: format(now, 'yyyy-MM-dd'),
-        hora: format(now, 'HH:mm:ss'),
-        tienda_id: tiendaActiva.id,
-        usuario_id: user.id,
-        registrado_por: user.id,
-        tipo_documento_cliente:
-          values.tipo_documento === 'NO_PROPORCIONADO'
-            ? null
-            : values.tipo_documento,
-        dni_cliente:
-          values.tipo_documento === 'NO_PROPORCIONADO'
-            ? null
-            : values.numero_documento || null,
-        nombre_cliente: nombreCliente || null,
-        es_cliente_entel: esClienteEntel,
-        tipo_visita: values.tipo_visita,
-        concreto_operacion: values.concreto_operacion === 'SI',
-        se_vendio:
-          values.tipo_visita === 'VENTA'
-            ? values.se_vendio === 'SI'
-            : null,
-        motivo_no_venta:
-          values.tipo_visita === 'VENTA' && values.se_vendio === 'NO'
-            ? values.motivo_no_venta
-            : null,
-      }
-
       const response = await fetch('/api/arribos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
+      const json = await response.json()
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.message || 'Error al guardar arribo')
+        throw new Error(json.error || json.message || 'Error al guardar arribo')
       }
 
+      if (irAVenta) {
+        router.push(`/dashboard/ventas/nuevo?arribo_id=${json.arribo.id}`)
+        return
+      }
+
+      toast.success('Arribo registrado exitosamente')
       setIsSuccess(true)
       form.reset()
       setNombreCliente('')
       setDocumentoError(null)
       lastQueryRef.current = ''
 
-      // Redirigir después de 2 segundos
       setTimeout(() => {
         router.push('/dashboard')
       }, 2000)
     } catch (error) {
       console.error('Error:', error)
-      alert('Error al registrar arribo: ' + (error as Error).message)
+      toast.error('Error al registrar arribo: ' + (error as Error).message)
     } finally {
       setIsLoading(false)
     }
+  }
+
+  async function onSubmit(values: ArriboFormValues) {
+    if (!user || !tiendaActiva) {
+      toast.error('No se pudo obtener la información del usuario o tienda')
+      return
+    }
+
+    const payload = construirPayload(values)
+
+    // Camino A: si se declaró una venta, ofrecer registrarla de inmediato.
+    if (values.tipo_visita === 'VENTA' && values.se_vendio === 'SI') {
+      setPendingArribo(payload) // abre el diálogo; NO guarda aún
+      return
+    }
+
+    await guardarArribo(payload, { irAVenta: false })
   }
 
   if (!user) {
@@ -482,17 +554,20 @@ export default function NuevoArriboPage() {
                                 ? '8 dígitos'
                                 : tipoDocumento === 'CE'
                                   ? '9 dígitos'
-                                  : 'Número'
+                                  : tipoDocumento === 'RUC'
+                                    ? '11 dígitos'
+                                    : 'Número'
                             }
-                            maxLength={tipoDocumento === 'OTRO' ? 20 : longitudDocumento}
+                            maxLength={longitudDocumento}
                             {...field}
                             disabled={isLoading}
                             onChange={(e) => {
-                              // Solo permitir números para DNI y CE
-                              const value =
-                                tipoDocumento === 'OTRO'
-                                  ? e.target.value
-                                  : e.target.value.replace(/\D/g, '')
+                              // Solo dígitos para DNI/CE/RUC; alfanumérico para el resto.
+                              const value = SOLO_DIGITOS.includes(
+                                tipoDocumento as TipoDocumento
+                              )
+                                ? e.target.value.replace(/\D/g, '')
+                                : e.target.value
                               field.onChange(value)
                             }}
                           />
@@ -697,6 +772,41 @@ export default function NuevoArriboPage() {
           </Form>
         </CardContent>
       </Card>
+
+      {/* Camino A: ¿registrar la venta vinculada ahora? */}
+      <AlertDialog
+        open={!!pendingArribo}
+        onOpenChange={(o) => !o && setPendingArribo(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Registrar la venta ahora?</AlertDialogTitle>
+            <AlertDialogDescription>
+              El arribo se guardará y podrás completar la venta vinculada de
+              inmediato. Si eliges &ldquo;Solo el arribo&rdquo;, quedará marcado
+              como venta declarada pendiente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                if (pendingArribo) guardarArribo(pendingArribo, { irAVenta: false })
+                setPendingArribo(null)
+              }}
+            >
+              Solo el arribo
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingArribo) guardarArribo(pendingArribo, { irAVenta: true })
+                setPendingArribo(null)
+              }}
+            >
+              Sí, registrar venta
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

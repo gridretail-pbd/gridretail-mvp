@@ -5,8 +5,29 @@
 
 ---
 
-## [Pendiente]
 
+
+## [2026-02-03] v1.2 - Nuevos Tipos de Venta
+
+### Base de Datos
+- ✅ Agregado `PACK_OPP_BASE` (Pack con portabilidad OPP a cliente BASE)
+- ✅ Agregado `RENO_LLAA` (Renovación con línea adicional)
+- ✅ Total tipos de venta: 16 → 18
+
+### Lógica de Negocio
+- ✅ PACK_OPP_BASE cuenta para: PACKS + OPP_BASE
+- ✅ RENO_LLAA cuenta para: RENO + VR_BASE
+- ✅ Actualizados presets de comisiones para conteo múltiple
+
+### Documentación
+- ✅ SPECS_REGISTRO_VENTA_DIARIA.md actualizado a v2.2
+- ✅ DATA_DICTIONARY.md actualizado a v2.7
+- ✅ GRIDRETAIL_QUICK_REFERENCE.md actualizado
+
+### Frontend
+- ✅ Sin cambios requeridos (tipos se leen dinámicamente de BD)
+
+## [Pendiente]
 ### Validaciones
 - [ ] Agregar campo `validacion_huella` al formulario (HUELLERO/DJ/VENTA EXTRANJERO)
 - [ ] Agregar campo `vep_contado` al formulario (VEP/CONTADO)

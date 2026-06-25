@@ -1,8 +1,8 @@
 # Especificaciones: Registro de Venta Diaria (Boca de Urna)
 ## GridRetail - Módulo de Ventas
 
-**Versión:** 2.1  
-**Actualización:** 2026-01-27  
+**Versión:** 2.2  
+**Actualización:** 2026-02-03  
 **Estado:** ✅ Validado contra BD de producción
 
 ---
@@ -113,14 +113,14 @@ Al presionar "Verificar", el sistema consulta:
 | `tipo_venta` | Select | Sí | Código del tipo de venta |
 | `operador_cedente` | Select | Condicional | Solo para portabilidades |
 
-**16 Tipos de Venta (desde BD):**
+**18 Tipos de Venta (desde BD):**
 
 | Categoría | Tipos |
 |-----------|-------|
 | POSTPAGO (8) | OSS_BASE, OSS_CAPTURA, OPP_CAPTURA, OPP_BASE, VR_MONO, VR_CAPTURA, VR_BASE, MISS_IN |
 | PACK (2) | PACK_VR, PACK_OPEN |
-| PACK_SS (2) | PACK_OSS, PACK_VR_BASE |
-| RENO (1) | RENO |
+| PACK_SS (3) | PACK_OSS, PACK_VR_BASE, **PACK_OPP_BASE** ✨ |
+| RENO (2) | RENO, **RENO_LLAA** ✨ |
 | PREPAGO (2) | PREPAGO, PORTA_PP |
 | OTROS (1) | ACCESORIOS |
 
@@ -140,10 +140,23 @@ Al presionar "Verificar", el sistema consulta:
 | PACK_OPEN | ❌ | ✅ | ✅ |
 | PACK_OSS | ✅ | ✅ | ✅ |
 | PACK_VR_BASE | ❌ | ✅ | ✅ |
+| **PACK_OPP_BASE** | ✅ | ✅ | ✅ |
 | RENO | ❌ | ✅ | ✅ |
+| **RENO_LLAA** | ❌ | ✅ | ✅ |
 | PREPAGO | ❌ | ❌ | ❌ |
 | PORTA_PP | ✅ | ❌ | ❌ |
 | ACCESORIOS | ❌ | ❌ | ❌ |
+
+**Conteo Múltiple para Comisiones:**
+
+Algunos tipos cuentan para más de una partida de comisión:
+
+| Tipo | Suma a Partidas |
+|------|-----------------|
+| PACK_OSS | PACKS + OSS |
+| PACK_VR_BASE | PACKS + VR_BASE |
+| **PACK_OPP_BASE** | PACKS + OPP_BASE |
+| **RENO_LLAA** | RENO + VR_BASE |
 
 **Operadores Cedentes:**
 - MOVISTAR
@@ -158,7 +171,7 @@ Al presionar "Verificar", el sistema consulta:
 |-------|------|------------|-------------|
 | `imei_equipo` | Input | `/^\d{15}$/` | Si `requiere_imei` |
 | `modelo_equipo` | Input | Texto libre | Opcional |
-| `iccid_chip` | Input | `/^\d{19,20}$/` | No en RENO ni ACCESORIOS |
+| `iccid_chip` | Input | `/^\d{19,20}$/` | No en RENO, RENO_LLAA ni ACCESORIOS |
 | `incluye_seguro` | Checkbox | Boolean | Si `permite_seguro` |
 | `incluye_accesorios` | Checkbox | Boolean | Siempre visible |
 | `descripcion_accesorios` | Input | Texto | Si `incluye_accesorios` |
@@ -329,6 +342,7 @@ api/ventas/verificar-orden/route.ts               # API verificación
 3. **UI Components:** shadcn/ui (Card, Form, Input, Select, etc.)
 4. **Iconos:** lucide-react
 5. **Responsive:** Grid de 2 columnas en desktop, 1 en mobile
+6. **Tipos de venta dinámicos:** Se leen de BD, no hay código hardcoded
 
 ---
 
@@ -339,3 +353,4 @@ api/ventas/verificar-orden/route.ts               # API verificación
 | 1.0 | 2026-01-XX | Versión inicial |
 | 2.0 | 2026-01-27 | Actualización orden [78]XXXXXXXX |
 | 2.1 | 2026-01-27 | Validación contra BD: confirmados 16 tipos (sin OPP_MONO, con PACK_OPEN). Corregidos constraints de tipo_documento. |
+| **2.2** | **2026-02-03** | **Agregados 2 nuevos tipos: PACK_OPP_BASE y RENO_LLAA. Total: 18 tipos. Documentada sección de conteo múltiple para comisiones.** |
