@@ -2,15 +2,24 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Laptop, Loader2, Store } from 'lucide-react'
+import { ArrowLeft, Laptop, Loader2, Settings, Store } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { PinPad } from '@/components/auth/PinPad'
 import { RosterTienda } from '@/components/auth/RosterTienda'
 import {
+  desenrolarDispositivo,
   establecerPin,
+  establecerPinSupervisor,
   fetchRoster,
   pinLogin,
   solicitarOtp,
@@ -45,6 +54,36 @@ export default function ModoTiendaPage() {
   const [setupMsg, setSetupMsg] = useState<string | null>(null)
   const [setupLoading, setSetupLoading] = useState(false)
 
+  // Configurar equipo: des-enrolar / cambiar de tienda (step-up supervisor)
+  const [showConfig, setShowConfig] = useState(false)
+  const [supCodigo, setSupCodigo] = useState('')
+  const [supPassword, setSupPassword] = useState('')
+  const [configError, setConfigError] = useState<string | null>(null)
+  const [configLoading, setConfigLoading] = useState(false)
+
+  // Configurar PIN: 'supervisor' (autorización presencial) | 'otp' (WhatsApp, Fase 3)
+  const [setupMode, setSetupMode] = useState<'supervisor' | 'otp'>('supervisor')
+  const [pinSupCodigo, setPinSupCodigo] = useState('')
+  const [pinSupPassword, setPinSupPassword] = useState('')
+
+  async function ejecutarConfig(destino: '/login' | '/enrolar-dispositivo') {
+    if (!supCodigo || !supPassword) {
+      setConfigError('Ingresa el código y la contraseña de un supervisor/admin')
+      return
+    }
+    setConfigLoading(true)
+    setConfigError(null)
+    try {
+      await desenrolarDispositivo(supCodigo, supPassword)
+      router.push(destino)
+      router.refresh()
+    } catch (e) {
+      setConfigError((e as Error).message || 'No se pudo completar la acción')
+    } finally {
+      setConfigLoading(false)
+    }
+  }
+
   const cargarRoster = useCallback(async () => {
     setCargando(true)
     try {
@@ -73,6 +112,9 @@ export default function ModoTiendaPage() {
     setOtpEnviado(false)
     setSetupError(null)
     setSetupMsg(null)
+    setSetupMode('supervisor')
+    setPinSupCodigo('')
+    setPinSupPassword('')
   }
 
   function seleccionarUsuario(u: RosterUsuario) {
@@ -135,6 +177,33 @@ export default function ModoTiendaPage() {
       )
     } catch (e) {
       setSetupError((e as Error).message || 'No se pudo enviar el código.')
+    } finally {
+      setSetupLoading(false)
+    }
+  }
+
+  async function guardarPinSupervisor() {
+    if (!usuario) return
+    if (!/^\d{6}$/.test(nuevoPin)) {
+      setSetupError('El PIN debe tener 6 dígitos.')
+      return
+    }
+    if (nuevoPin !== confirmaPin) {
+      setSetupError('Los PIN no coinciden.')
+      return
+    }
+    if (!pinSupCodigo || !pinSupPassword) {
+      setSetupError('Ingresa el código y la contraseña del supervisor.')
+      return
+    }
+    setSetupLoading(true)
+    setSetupError(null)
+    try {
+      await establecerPinSupervisor(usuario.id, nuevoPin, pinSupCodigo, pinSupPassword)
+      // PIN listo → iniciar sesión del asesor directamente.
+      await intentarLogin({ ...usuario, tiene_pin: true }, nuevoPin)
+    } catch (e) {
+      setSetupError((e as Error).message || 'No se pudo guardar el PIN.')
     } finally {
       setSetupLoading(false)
     }
@@ -209,13 +278,26 @@ export default function ModoTiendaPage() {
             </div>
             <span className="text-lg font-semibold">GridRetail</span>
           </div>
-          {roster?.tienda && (
-            <div className="flex items-center gap-2 text-sm">
-              <Store className="h-4 w-4 text-primary" />
-              <span className="font-medium">{roster.tienda.nombre}</span>
-              <span className="text-muted-foreground">({roster.tienda.codigo})</span>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {roster?.tienda && (
+              <div className="flex items-center gap-2 text-sm">
+                <Store className="h-4 w-4 text-primary" />
+                <span className="font-medium">{roster.tienda.nombre}</span>
+                <span className="text-muted-foreground">({roster.tienda.codigo})</span>
+              </div>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={() => {
+                setConfigError(null)
+                setShowConfig(true)
+              }}
+            >
+              <Settings className="mr-1 h-4 w-4" /> Configurar equipo
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -231,6 +313,15 @@ export default function ModoTiendaPage() {
             {roster && (
               <RosterTienda usuarios={roster.usuarios} onSelect={seleccionarUsuario} />
             )}
+            <div className="mt-8 text-center">
+              <button
+                type="button"
+                onClick={() => router.push('/login')}
+                className="text-sm text-muted-foreground transition-colors hover:text-primary hover:underline"
+              >
+                Otro usuario / acceso administrativo
+              </button>
+            </div>
           </div>
         )}
 
@@ -281,7 +372,86 @@ export default function ModoTiendaPage() {
                 <p className="text-sm text-muted-foreground">{usuario.nombre_completo}</p>
               </div>
 
-              {!otpEnviado ? (
+              {/* Método para definir el PIN */}
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={setupMode === 'supervisor' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setSetupError(null)
+                    setSetupMode('supervisor')
+                  }}
+                >
+                  Con supervisor
+                </Button>
+                <Button
+                  type="button"
+                  variant={setupMode === 'otp' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setSetupError(null)
+                    setSetupMode('otp')
+                  }}
+                >
+                  Por WhatsApp
+                </Button>
+              </div>
+
+              {setupMode === 'supervisor' ? (
+                <>
+                  <p className="text-center text-sm text-muted-foreground">
+                    Un supervisor o administrador autoriza y define el PIN del asesor.
+                  </p>
+                  <div className="space-y-2">
+                    <Label htmlFor="pin-sup-cod">Código supervisor/admin</Label>
+                    <Input
+                      id="pin-sup-cod"
+                      autoComplete="off"
+                      value={pinSupCodigo}
+                      onChange={(e) => setPinSupCodigo(e.target.value)}
+                      disabled={setupLoading}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="pin-sup-pass">Contraseña</Label>
+                    <Input
+                      id="pin-sup-pass"
+                      type="password"
+                      value={pinSupPassword}
+                      onChange={(e) => setPinSupPassword(e.target.value)}
+                      disabled={setupLoading}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="nuevoPinSup">Nuevo PIN del asesor (6 dígitos)</Label>
+                    <Input
+                      id="nuevoPinSup"
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={nuevoPin}
+                      onChange={(e) => setNuevoPin(e.target.value.replace(/\D/g, ''))}
+                      disabled={setupLoading}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="confirmaPinSup">Confirma el PIN</Label>
+                    <Input
+                      id="confirmaPinSup"
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={confirmaPin}
+                      onChange={(e) => setConfirmaPin(e.target.value.replace(/\D/g, ''))}
+                      disabled={setupLoading}
+                    />
+                  </div>
+                  <Button className="w-full" onClick={guardarPinSupervisor} disabled={setupLoading}>
+                    {setupLoading ? 'Guardando...' : 'Guardar PIN e ingresar'}
+                  </Button>
+                </>
+              ) : !otpEnviado ? (
                 <>
                   <p className="text-center text-sm text-muted-foreground">
                     Te enviaremos un código por WhatsApp para verificar tu identidad.
@@ -289,6 +459,9 @@ export default function ModoTiendaPage() {
                   <Button className="w-full" onClick={enviarOtp} disabled={setupLoading}>
                     {setupLoading ? 'Enviando...' : 'Enviar código por WhatsApp'}
                   </Button>
+                  <p className="text-center text-xs text-muted-foreground">
+                    (El envío por WhatsApp aún no está disponible — usa "Con supervisor".)
+                  </p>
                 </>
               ) : (
                 <>
@@ -346,6 +519,60 @@ export default function ModoTiendaPage() {
           </Card>
         )}
       </main>
+
+      {/* Configurar equipo: cambiar de tienda o des-enrolar (step-up supervisor) */}
+      <Dialog open={showConfig} onOpenChange={setShowConfig}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Configurar equipo</DialogTitle>
+            <DialogDescription>
+              Requiere credenciales de un supervisor o administrador.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="sup-codigo">Código supervisor/admin</Label>
+              <Input
+                id="sup-codigo"
+                value={supCodigo}
+                onChange={(e) => setSupCodigo(e.target.value)}
+                disabled={configLoading}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="sup-pass">Contraseña</Label>
+              <Input
+                id="sup-pass"
+                type="password"
+                value={supPassword}
+                onChange={(e) => setSupPassword(e.target.value)}
+                disabled={configLoading}
+              />
+            </div>
+            {configError && <p className="text-sm text-destructive">{configError}</p>}
+            <div className="grid gap-2 pt-1">
+              <Button
+                onClick={() => ejecutarConfig('/enrolar-dispositivo')}
+                disabled={configLoading}
+              >
+                <Store className="mr-2 h-4 w-4" /> Cambiar de tienda
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => ejecutarConfig('/login')}
+                disabled={configLoading}
+              >
+                <Laptop className="mr-2 h-4 w-4" /> Des-enrolar este equipo
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Cambiar de tienda des-enrola este equipo y te lleva a enrolarlo en otra
+              tienda. Des-enrolar lo deja sin tienda (volverá al login).
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

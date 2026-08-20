@@ -147,6 +147,15 @@ export default function LoginPage() {
               </Button>
             </form>
           </Form>
+          <div className="mt-6 border-t pt-4 text-center">
+            <button
+              type="button"
+              onClick={() => router.push('/enrolar-dispositivo')}
+              className="text-sm text-muted-foreground transition-colors hover:text-primary hover:underline"
+            >
+              ¿Equipo de tienda? Enrolar este dispositivo
+            </button>
+          </div>
         </CardContent>
       </Card>
     </div>

@@ -91,6 +91,27 @@ export async function bloquearSesion(): Promise<void> {
   localStorage.removeItem('modo_tienda')
 }
 
+/**
+ * Des-enrola el equipo (step-up con credenciales de supervisor/admin).
+ * Invalida el `device_token` y limpia el estado de sesión local. El llamador
+ * decide a dónde redirigir (login = des-enrolar; enrolar = cambiar de tienda).
+ */
+export async function desenrolarDispositivo(
+  codigo_asesor: string,
+  password: string
+): Promise<void> {
+  await parse(
+    await fetch('/api/dispositivos/des-enrolar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codigo_asesor, password }),
+    })
+  )
+  localStorage.removeItem('user')
+  localStorage.removeItem('tienda_activa')
+  localStorage.removeItem('modo_tienda')
+}
+
 /** Solicita OTP por WhatsApp para enrolar/resetear el PIN. */
 export async function solicitarOtp(
   usuario_id: string,
@@ -101,6 +122,25 @@ export async function solicitarOtp(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ usuario_id, proposito }),
+    })
+  )
+}
+
+/**
+ * Fija el PIN de un asesor con autorización de un supervisor/admin presente
+ * (sin OTP). Camino interino mientras WhatsApp (Fase 3) no está implementado.
+ */
+export async function establecerPinSupervisor(
+  usuario_id: string,
+  pin: string,
+  supervisor_codigo: string,
+  supervisor_password: string
+): Promise<void> {
+  await parse(
+    await fetch('/api/auth/pin/establecer-supervisor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario_id, pin, supervisor_codigo, supervisor_password }),
     })
   )
 }
