@@ -13,7 +13,7 @@ import type {
   CommissionItemMultiplier,
   MultiplierType,
   ActivationCriteria,
-  MeasurementType,
+  MultiplierMeasurementType,
 } from '@/lib/comisiones/types'
 
 /**
@@ -68,7 +68,7 @@ export function convertLocksToMultipliers(
       factor_if_not_met: 0,
       tiered_ranges: null,
       operator_cedente: null,
-      measurement_type: 'UNIT_COUNT' as MeasurementType,
+      measurement_type: 'UNIT_COUNT' as MultiplierMeasurementType,
       measurement_config: null,
       is_active: true,
       display_order: index,

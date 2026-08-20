@@ -137,7 +137,8 @@ export function evaluateMultiplier(
   let conditionMet = false
   let appliedFactor = mult.factor_if_not_met
   let currentValue = 0
-  const requiredValue = mult.threshold_value
+  // threshold_value es opcional en el schema; el consumidor espera number | null
+  const requiredValue = mult.threshold_value ?? null
   let description = mult.source_description
 
   switch (mult.activation_criteria) {
@@ -674,7 +675,7 @@ export function calculateCommissionV2(
       multipliersEvaluated: multiplierResult.evaluations,
       combinedMultiplierFactor: multiplierResult.combinedFactor,
       hasBlockingMultiplier: multiplierResult.hasBlocking,
-      overcomplianceResult: overcompResult,
+      overcomplianceResult: overcompResult ?? null,
       restrictionApplied: false,
       restrictionDetail: null,
       baseCommission: contribution.baseCommission,

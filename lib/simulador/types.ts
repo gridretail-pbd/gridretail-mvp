@@ -275,7 +275,7 @@ export interface Scenario {
   schemeName: string
   profile: SalesProfile
   salesData: SalesData
-  result: SimulationResult | null
+  result: SimulationResult | SimulationResultV2 | null
   createdAt: Date
 }
 

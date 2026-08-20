@@ -31,7 +31,7 @@ import {
   groupItemsByCategory,
 } from '@/lib/simulador/profiles'
 import { formatCurrency, formatPeriod } from '@/lib/simulador/formatters'
-import type { SalesData, SimulationResult as SimulationResultType, HCEffectiveQuota } from '@/lib/simulador/types'
+import type { SalesData, SimulationResult as SimulationResultType, SimulationResultV2, HCEffectiveQuota } from '@/lib/simulador/types'
 import {
   calculateRemainingDays,
   calculateSalesNeeded,
@@ -260,7 +260,7 @@ export default function MiComisionPage() {
 
   // v1.2: Handler para What If Calculator con cuota
   const handleWhatIfCalculate = useCallback(
-    async (newSalesData: SalesData): Promise<SimulationResultType | null> => {
+    async (newSalesData: SalesData): Promise<SimulationResultType | SimulationResultV2 | null> => {
       if (!selectedScheme) return null
       return await simulateLocal(selectedScheme, newSalesData, hcQuota || undefined)
     },

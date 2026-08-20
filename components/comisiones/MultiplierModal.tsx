@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import { multiplierFormSchema, type MultiplierFormValues } from '@/lib/comisiones/validations'
+import { multiplierFormSchema, type MultiplierFormValues, type MultiplierFormInput } from '@/lib/comisiones/validations'
 import {
   type MultiplierType,
   type TieredRange,
@@ -82,7 +82,7 @@ export function MultiplierModal({
     { min: 100.01, max: 999999, factor: 1.10, label: '' },
   ])
 
-  const form = useForm<MultiplierFormValues>({
+  const form = useForm<MultiplierFormInput, unknown, MultiplierFormValues>({
     resolver: zodResolver(multiplierFormSchema),
     defaultValues: {
       multiplier_type: 'LOCK',

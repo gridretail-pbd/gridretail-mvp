@@ -13,15 +13,15 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ArrowRight, Calculator, TrendingUp } from 'lucide-react'
-import type { SchemeItemWithMapping, SimulationResult, SalesData } from '@/lib/simulador/types'
+import type { SchemeItemWithMapping, SimulationResult, SimulationResultV2, SalesData } from '@/lib/simulador/types'
 import { getDisplayName, getEffectiveItemName, getEffectiveCategory } from '@/lib/simulador/profiles'
 import { formatCurrency, formatDifference } from '@/lib/simulador/formatters'
 
 interface WhatIfCalculatorProps {
   schemeItems: SchemeItemWithMapping[]
-  currentResult: SimulationResult
+  currentResult: SimulationResult | SimulationResultV2
   currentSalesData: SalesData
-  onCalculate: (newSalesData: SalesData) => Promise<SimulationResult | null>
+  onCalculate: (newSalesData: SalesData) => Promise<SimulationResult | SimulationResultV2 | null>
 }
 
 /**
@@ -36,7 +36,7 @@ export function WhatIfCalculator({
 }: WhatIfCalculatorProps) {
   const [selectedItemId, setSelectedItemId] = useState<string>('')
   const [additionalSales, setAdditionalSales] = useState<number>(5)
-  const [newResult, setNewResult] = useState<SimulationResult | null>(null)
+  const [newResult, setNewResult] = useState<SimulationResult | SimulationResultV2 | null>(null)
   const [calculating, setCalculating] = useState(false)
 
   // Filtrar solo partidas con cuota (que pueden incrementarse)

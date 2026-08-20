@@ -35,7 +35,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
-import { schemeItemFormSchema, type SchemeItemFormValues } from '@/lib/comisiones/validations'
+import { schemeItemFormSchema, type SchemeItemFormValues, type SchemeItemFormInput } from '@/lib/comisiones/validations'
 import {
   type PartitionPreset,
   type TipoVenta,
@@ -105,7 +105,7 @@ export function SchemeItemModal({
   const [activeTab, setActiveTab] = useState<TabValue>('agrupacion')
   const [lastEdited, setLastEdited] = useState<'meta' | 'weight' | null>(null)
 
-  const form = useForm<SchemeItemFormValues>({
+  const form = useForm<SchemeItemFormInput, unknown, SchemeItemFormValues>({
     resolver: zodResolver(schemeItemFormSchema),
     defaultValues: {
       item_type_id: null,
@@ -757,8 +757,14 @@ export function SchemeItemModal({
                               <FormLabel>Rangos del Acelerador</FormLabel>
                               <FormControl>
                                 <AcceleratorRangesEditor
-                                  value={field.value}
-                                  onChange={field.onChange}
+                                  value={field.value?.ranges ?? []}
+                                  onChange={(ranges) =>
+                                    field.onChange(
+                                      ranges.length > 0
+                                        ? { ...(field.value ?? {}), ranges }
+                                        : null
+                                    )
+                                  }
                                 />
                               </FormControl>
                               <FormMessage />

@@ -42,6 +42,15 @@ import { normalizeItemToV2, normalizeSchemeToV2, isV2Scheme } from './normalizer
 /**
  * Hook principal para ejecutar simulaciones de comisiones
  */
+/**
+ * Supabase infiere los embeds a-uno (item_type, preset) como array, pero en
+ * runtime devuelve un objeto. Normaliza ambas formas.
+ */
+function toOneRelation<T>(rel: T | T[] | null | undefined): T | null {
+  if (Array.isArray(rel)) return rel[0] ?? null
+  return rel ?? null
+}
+
 export function useSimulation() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<SimulationResult | SimulationResultV2 | null>(null)
@@ -356,16 +365,20 @@ export function useSchemeData() {
       if (hasV2SchemeFields || hasV2ItemFields || hasMultipliers) {
         // Construir esquema v2
         const itemsV2: SchemeItemV2[] = (itemsData || []).map(item => {
+          const preset = toOneRelation(item.preset)
+          const itemType = toOneRelation(item.item_type)
           // Derivar category y calculation_type de preset o item_type (NO existen en la tabla)
-          const category = item.preset?.default_category
-            || item.item_type?.category
+          const category = preset?.default_category
+            || itemType?.category
             || 'adicional'
-          const calculationType = item.preset?.default_calculation_type
-            || item.item_type?.calculation_type
+          const calculationType = preset?.default_calculation_type
+            || itemType?.calculation_type
             || 'percentage'
 
           return {
             ...item,
+            preset,
+            item_type: itemType,
             mapped_tipos_venta: ventasMappings[item.id] || [],
             // Campos derivados de joins (NO existen en la tabla)
             category,
@@ -406,16 +419,20 @@ export function useSchemeData() {
 
       // Legacy: mapear partidas sin campos v2
       const itemsWithMapping: SchemeItemWithMapping[] = (itemsData || []).map(item => {
+        const preset = toOneRelation(item.preset)
+        const itemType = toOneRelation(item.item_type)
         // Derivar category y calculation_type de preset o item_type (NO existen en la tabla)
-        const category = item.preset?.default_category
-          || item.item_type?.category
+        const category = preset?.default_category
+          || itemType?.category
           || 'adicional'
-        const calculationType = item.preset?.default_calculation_type
-          || item.item_type?.calculation_type
+        const calculationType = preset?.default_calculation_type
+          || itemType?.calculation_type
           || 'percentage'
 
         return {
           ...item,
+          preset,
+          item_type: itemType,
           // Campos derivados de joins (NO existen en la tabla)
           category,
           calculation_type: calculationType,
@@ -464,10 +481,10 @@ export function useScenarios() {
    * Agrega un nuevo escenario
    */
   const addScenario = useCallback((
-    scheme: SchemeForSimulation,
+    scheme: SchemeForSimulation | SchemeForSimulationV2,
     profile: SalesProfile,
     salesData: SalesData,
-    result: SimulationResult | null
+    result: SimulationResult | SimulationResultV2 | null
   ) => {
     const newScenario: Scenario = {
       id: crypto.randomUUID(),

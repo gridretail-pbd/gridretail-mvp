@@ -159,6 +159,9 @@ export const schemeItemFormSchema = z.object({
 })
 
 export type SchemeItemFormValues = z.infer<typeof schemeItemFormSchema>
+/** Tipo de ENTRADA del schema: los campos con .default() son opcionales.
+ *  Necesario para useForm porque zodResolver se tipa contra el input. */
+export type SchemeItemFormInput = z.input<typeof schemeItemFormSchema>
 
 /**
  * Validación adicional: debe tener item_type_id, preset_id o custom_name
@@ -191,6 +194,8 @@ export const multiplierFormSchema = z.object({
 })
 
 export type MultiplierFormValues = z.infer<typeof multiplierFormSchema>
+/** Tipo de ENTRADA del schema (ver nota en SchemeItemFormInput). */
+export type MultiplierFormInput = z.input<typeof multiplierFormSchema>
 
 // ── Schema: Candado (legacy) ──────────────────────────────────
 
