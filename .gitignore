@@ -52,3 +52,7 @@ nul
 # Estructura
 estructura.txt
 
+
+_to_delete/
+tsc.log
+*.tmp
